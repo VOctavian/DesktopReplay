@@ -122,6 +122,13 @@ public interface IAudioCaptureClient
     [PreserveSig] int GetNextPacketSize(out uint frames);
 }
 
+[ComImport, Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioRenderClient
+{
+    [PreserveSig] int GetBuffer(uint frames, out IntPtr data);
+    [PreserveSig] int ReleaseBuffer(uint frames, uint flags);
+}
+
 [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IAudioSessionManager2
 {
@@ -181,6 +188,7 @@ public static class CoreAudio
 {
     public static readonly Guid IID_IAudioClient = new("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
     public static readonly Guid IID_IAudioCaptureClient = new("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
+    public static readonly Guid IID_IAudioRenderClient = new("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
     public static readonly Guid IID_IAudioSessionManager2 = new("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
     public static readonly PropertyKey PKEY_Device_FriendlyName = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 14);
 

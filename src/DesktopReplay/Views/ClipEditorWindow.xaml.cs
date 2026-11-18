@@ -32,6 +32,9 @@ public partial class ClipEditorWindow : Window
     private double _shortsX = 0.5, _shortsGrab = -1;
     private WindowState _prevState;
     private CancellationTokenSource? _exportCts;
+    private AudioPreview? _audio;
+    private readonly List<PreviewTrack> _preview = new();
+    private DateTime _playStarted, _lastResync;
 
     /// <summary>True when a file was created, replaced or deleted (the gallery rescans).</summary>
     public bool FilesChanged { get; private set; }
@@ -88,7 +91,10 @@ public partial class ClipEditorWindow : Window
         UpdateSelectionInfo();
         UpdateTime();
 
-        Player.Volume = VolumeSlider.Value;
+        // The WPF player can't choose an audio track (it plays the last one), so it stays muted
+        // and AudioPreview plays the tracks itself.
+        Player.IsMuted = true;
+        _audio = new AudioPreview(_entry.Path, _preview) { Volume = VolumeSlider.Value };
         Player.Source = new Uri(_entry.Path);
         Player.Pause(); // opens the media and shows the first frame
         _tick.Start();
@@ -107,6 +113,7 @@ public partial class ClipEditorWindow : Window
     {
         TracksPanel.Children.Clear();
         _tracks.Clear();
+        _preview.Clear();
         int n = 1;
         foreach (var a in _info!.Audio)
         {
@@ -132,11 +139,38 @@ public partial class ClipEditorWindow : Window
             grid.Children.Add(include); grid.Children.Add(range); grid.Children.Add(vol); grid.Children.Add(volText);
             TracksPanel.Children.Add(grid);
             _tracks.Add(new TrackRow { Info = a, Include = include, Volume = vol, Range = range, Title = title });
+            _preview.Add(new PreviewTrack { StreamIndex = a.Index });
             n++;
         }
+        var listen = new List<string> { Loc.T("E.ListenResult") };
+        listen.AddRange(_tracks.Select((t, i) => $"{i + 1}. {t.Title}"));
+        ListenCombo.ItemsSource = listen;
+        ListenCombo.SelectedIndex = 0;
+        ListenCombo.IsEnabled = _tracks.Count > 0;
         NoAudioText.Visibility = _tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateMergeState();
     }
+
+    /// <summary>Copies the track settings into the live preview mix.</summary>
+    private void UpdateAudible()
+    {
+        int mode = ListenCombo.SelectedIndex; // 0 = as in the saved file, k = only track k
+        bool merge = MergeCheck.IsChecked == true;
+        int firstIncluded = _tracks.FindIndex(t => t.Include.IsChecked == true);
+        for (int i = 0; i < _tracks.Count; i++)
+        {
+            var t = _tracks[i];
+            var p = _preview[i];
+            p.Audible = mode > 0 ? i == mode - 1
+                : t.Include.IsChecked == true && (merge || i == firstIncluded); // players play the first track of the file
+            p.Volume = t.Volume.Value;
+            bool fullRange = mode > 0;
+            p.From = fullRange ? 0 : Math.Max(t.Range.From, Timeline.From);
+            p.To = fullRange ? double.MaxValue : Math.Min(t.Range.To, Timeline.To);
+        }
+    }
+
+    private void OnListenChanged(object sender, SelectionChangedEventArgs e) => UpdateAudible();
 
     private void UpdateMergeState()
     {
@@ -175,7 +209,10 @@ public partial class ClipEditorWindow : Window
     {
         if (!_opened) return;
         double pos = Position;
-        if (pos < Timeline.From - 0.01 || pos >= Timeline.To - 0.02) Seek(Timeline.From);
+        if (pos < Timeline.From - 0.01 || pos >= Timeline.To - 0.02) { Seek(Timeline.From); pos = Timeline.From; }
+        UpdateAudible();
+        _audio?.Play(pos);
+        _playStarted = _lastResync = DateTime.UtcNow;
         Player.Play();
         _playing = true;
         PlayBtn.Content = "";
@@ -185,6 +222,7 @@ public partial class ClipEditorWindow : Window
     {
         if (!_playing) return;
         Player.Pause();
+        _audio?.Stop();
         _playing = false;
         PlayBtn.Content = "";
         Timeline.Position = Position;
@@ -213,6 +251,16 @@ public partial class ClipEditorWindow : Window
         Timeline.Position = pos;
         foreach (var tr in _tracks) tr.Range.Position = pos;
         UpdateTime();
+        UpdateAudible();
+
+        // keep our audio in step with the video clock (the player starts with a variable delay)
+        var now = DateTime.UtcNow;
+        if (_audio != null && (now - _playStarted).TotalSeconds > 1 && (now - _lastResync).TotalSeconds > 2 &&
+            Math.Abs(_audio.Position - pos) > 0.12)
+        {
+            _lastResync = now;
+            _audio.Play(pos);
+        }
     }
 
     private void UpdateTime() =>
@@ -234,15 +282,16 @@ public partial class ClipEditorWindow : Window
 
     private void OnVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (Player == null) return;
-        Player.Volume = VolumeSlider.Value;
-        if (Player.IsMuted && VolumeSlider.Value > 0) { Player.IsMuted = false; MuteBtn.Content = ""; }
+        if (_audio == null) return;
+        _audio.Volume = VolumeSlider.Value;
+        if (_audio.Muted && VolumeSlider.Value > 0) { _audio.Muted = false; MuteBtn.Content = ""; }
     }
 
     private void OnMute(object sender, RoutedEventArgs e)
     {
-        Player.IsMuted = !Player.IsMuted;
-        MuteBtn.Content = Player.IsMuted ? "" : "";
+        if (_audio == null) return;
+        _audio.Muted = !_audio.Muted;
+        MuteBtn.Content = _audio.Muted ? "" : "";
     }
 
     private void OnVideoClick(object sender, MouseButtonEventArgs e)
@@ -570,6 +619,7 @@ public partial class ClipEditorWindow : Window
 
     private void ClosePlayer()
     {
+        _audio?.Dispose();
         _playing = false;
         _opened = false;
         try

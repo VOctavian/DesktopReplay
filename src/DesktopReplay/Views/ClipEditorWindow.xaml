@@ -59,6 +59,8 @@
                 <TextBlock x:Name="TimeText" FontFamily="Consolas" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <TextBlock Text="{l:T E.Listen}" Style="{StaticResource Small}" Margin="0,0,8,0" />
+                <ComboBox x:Name="ListenCombo" Width="210" Margin="0,0,14,0" SelectionChanged="OnListenChanged" ToolTip="{l:T E.ListenHint}" />
                 <Button x:Name="MuteBtn" Style="{StaticResource IconButton}" Content="&#xE767;" Click="OnMute" ToolTip="{l:T E.Volume}" />
                 <Slider x:Name="VolumeSlider" Width="110" Minimum="0" Maximum="1" Value="0.8" VerticalAlignment="Center" ValueChanged="OnVolumeChanged" />
                 <Button Style="{StaticResource IconButton}" Content="&#xE740;" ToolTip="{l:T E.Fullscreen}" Click="OnFullscreen" Margin="10,0,0,0" />
