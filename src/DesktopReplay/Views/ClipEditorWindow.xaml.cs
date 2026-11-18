@@ -52,7 +52,8 @@ public partial class ClipEditorWindow : Window
         _tick.Tick += (_, _) => OnTick();
 
         Timeline.RangeDragging += isFrom => { Pause(); Seek(isFrom ? Timeline.From : Timeline.To); UpdateSelectionInfo(); };
-        Timeline.Seeking += t => { Pause(); Seek(t); };
+        Timeline.Seeking += Scrub;
+        Timeline.DragCompleted += EndScrub;
 
         SourceInitialized += (_, _) =>
         {
@@ -133,7 +134,8 @@ public partial class ClipEditorWindow : Window
             include.Checked += (_, _) => { range.Opacity = vol.Opacity = 1; range.IsEnabled = vol.IsEnabled = true; UpdateMergeState(); };
             include.Unchecked += (_, _) => { range.Opacity = vol.Opacity = 0.35; range.IsEnabled = vol.IsEnabled = false; UpdateMergeState(); };
             range.RangeDragging += isFrom => { Pause(); Seek(isFrom ? range.From : range.To); };
-            range.Seeking += t => { Pause(); Seek(t); };
+            range.Seeking += Scrub;
+            range.DragCompleted += EndScrub;
 
             Grid.SetColumn(range, 1); Grid.SetColumn(vol, 2); Grid.SetColumn(volText, 3);
             grid.Children.Add(include); grid.Children.Add(range); grid.Children.Add(vol); grid.Children.Add(volText);
@@ -255,11 +257,46 @@ public partial class ClipEditorWindow : Window
 
         // keep our audio in step with the video clock (the player starts with a variable delay)
         var now = DateTime.UtcNow;
-        if (_audio != null && (now - _playStarted).TotalSeconds > 1 && (now - _lastResync).TotalSeconds > 2 &&
+        if (_audio != null && !_scrubbing && (now - _playStarted).TotalSeconds > 1 && (now - _lastResync).TotalSeconds > 2 &&
             Math.Abs(_audio.Position - pos) > 0.12)
         {
             _lastResync = now;
             _audio.Play(pos);
+        }
+    }
+
+    private bool _scrubbing;
+
+    /// <summary>Clicking/dragging the playhead: keeps playing; audio pauses while dragging and resumes on release.</summary>
+    private void Scrub(double t)
+    {
+        if (_playing && !_scrubbing) { _scrubbing = true; _audio?.Stop(); }
+        Seek(t);
+    }
+
+    private void EndScrub()
+    {
+        if (!_scrubbing) return;
+        _scrubbing = false;
+        if (_playing) RestartAudio(Position);
+    }
+
+    private void RestartAudio(double t)
+    {
+        UpdateAudible();
+        _audio?.Play(t);
+        _playStarted = _lastResync = DateTime.UtcNow;
+    }
+
+    /// <summary>Jumps by <paramref name="delta"/> seconds without pausing.</summary>
+    private void SeekBy(double delta)
+    {
+        double t = Math.Clamp(Position + delta, 0, _duration);
+        Seek(t);
+        if (_playing)
+        {
+            if (t >= Timeline.To - 0.02) { Pause(); return; }
+            RestartAudio(t);
         }
     }
 
@@ -327,8 +364,14 @@ public partial class ClipEditorWindow : Window
         switch (e.Key)
         {
             case Key.Space: if (_playing) Pause(); else Play(); break;
-            case Key.Left: StepFrame(-1); break;
-            case Key.Right: StepFrame(1); break;
+            case Key.Left or Key.Right:
+            {
+                int dir = e.Key == Key.Right ? 1 : -1;
+                var mods = Keyboard.Modifiers;
+                if ((mods & ModifierKeys.Control) != 0) StepFrame(dir);
+                else SeekBy(dir * ((mods & ModifierKeys.Shift) != 0 ? 15 : 5));
+                break;
+            }
             case Key.Home: Pause(); Seek(Timeline.From); break;
             case Key.End: Pause(); Seek(Timeline.To); break;
             case Key.F: ToggleFullscreen(); break;

@@ -16,7 +16,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>DesktopReplay</AssemblyName>
-    <Version>0.2.2</Version>
+    <Version>0.2.3</Version>
     <Product>DesktopReplay</Product>
     <SelfContained>false</SelfContained>
     <NoWarn>$(NoWarn);CA1416;WFO0003</NoWarn>
