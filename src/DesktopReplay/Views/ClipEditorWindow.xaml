@@ -38,9 +38,10 @@
                     MouseLeftButtonDown="OnShortsDown" MouseMove="OnShortsMove" MouseLeftButtonUp="OnShortsUp">
                 <Rectangle x:Name="ShortsDimL" Fill="#B0000000" />
                 <Rectangle x:Name="ShortsDimR" Fill="#B0000000" />
+                <Rectangle x:Name="ShortsGuide" Width="2" Fill="{StaticResource Accent}" Opacity="0.9" Visibility="Collapsed" IsHitTestVisible="False" />
                 <Border x:Name="ShortsFrame" BorderBrush="{StaticResource Accent}" BorderThickness="2" Background="#01000000" Cursor="SizeWE">
                     <Border Background="#C0000000" CornerRadius="4" Padding="8,3" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0">
-                        <TextBlock Text="{l:T E.ShortsDrag}" FontSize="12" Foreground="White" />
+                        <TextBlock x:Name="ShortsLabel" Text="{l:T E.ShortsDrag}" FontSize="12" Foreground="White" />
                     </Border>
                 </Border>
             </Canvas>
@@ -96,7 +97,16 @@
                         <Button Style="{StaticResource QuickLen}" Content="{l:T E.Whole}" Tag="all" Click="OnQuickLength" />
                     </WrapPanel>
 
-                    <CheckBox x:Name="ShortsCheck" Content="{l:T E.Shorts}" Margin="0,16,0,0" Checked="OnShortsToggled" Unchecked="OnShortsToggled" />
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <CheckBox x:Name="ShortsCheck" Content="{l:T E.Shorts}" Checked="OnShortsToggled" Unchecked="OnShortsToggled" VerticalAlignment="Center" />
+                        <Button x:Name="ShortsCenterBtn" Click="OnShortsCenter" Margin="14,0,0,0" Padding="10,4" FontSize="12" Visibility="Collapsed"
+                                ToolTip="{l:T E.ShortsCenterHint}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE799;" FontFamily="{StaticResource Icons}" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="12" />
+                                <TextBlock Text="{l:T E.ShortsCenter}" FontSize="12" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
 
                     <TextBlock Text="{l:T E.Name}" Style="{StaticResource Label}" Margin="0,14,0,6" />
                     <DockPanel>

@@ -57,6 +57,8 @@ public sealed class Loc : INotifyPropertyChanged
         ["G.LastWeek"] = ("Прошлая неделя", "Last week"),
         ["G.Older"] = ("Старше 2 недель", "Older than 2 weeks"),
         ["G.Date"] = ("Дата", "Date"),
+        ["G.PickDate"] = ("Выбрать дату", "Pick a date"),
+        ["G.Clear"] = ("Очистить", "Clear"),
         ["G.Length"] = ("Длительность", "Length"),
         ["G.From"] = ("от", "from"),
         ["G.To"] = ("до", "to"),
@@ -74,7 +76,10 @@ public sealed class Loc : INotifyPropertyChanged
         ["G.DeleteConfirm"] = ("Переместить «{0}» в корзину?", "Move \"{0}\" to the Recycle Bin?"),
 
         // Clip editor
-        ["E.ShortsDrag"] = ("Перетащите, чтобы выбрать кадр 9:16", "Drag to position the 9:16 frame"),
+        ["E.ShortsDrag"] = ("Перетащите рамку · двойной клик — по центру", "Drag the frame · double-click to center"),
+        ["E.ShortsCentered"] = ("По центру · перетащите, чтобы сдвинуть", "Centered · drag to move"),
+        ["E.ShortsCenter"] = ("По центру", "Center"),
+        ["E.ShortsCenterHint"] = ("Вернуть рамку 9:16 в центр кадра", "Put the 9:16 frame back in the middle"),
         ["E.ToStart"] = ("К началу фрагмента (Home)", "To fragment start (Home)"),
         ["E.PrevFrame"] = ("Предыдущий кадр (←)", "Previous frame (←)"),
         ["E.NextFrame"] = ("Следующий кадр (→)", "Next frame (→)"),

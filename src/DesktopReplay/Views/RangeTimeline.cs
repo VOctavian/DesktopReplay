@@ -12,8 +12,10 @@ namespace DesktopReplay.Views;
 public sealed class RangeTimeline : FrameworkElement
 {
     private const double HandleW = 12;
-    private enum Drag { None, From, To, Head }
+    private enum Drag { None, From, To, Head, Move }
     private Drag _drag;
+    private double _moveGrab; // seconds between the grab point and "from"
+    private double _moveLen;
 
     private double _duration, _from, _to, _position = -1;
     private IList<ImageSource?>? _strip;
@@ -98,6 +100,15 @@ public sealed class RangeTimeline : FrameworkElement
         DrawHandle(dc, new Rect(xf - HandleW, top, HandleW, bh), true);
         DrawHandle(dc, new Rect(xt, top, HandleW, bh), false);
 
+        // grip in the middle of the selection: drag it to move the whole fragment
+        if (GripRect() is { } gr)
+        {
+            dc.DrawRoundedRectangle(Accent, new Pen(new SolidColorBrush(Color.FromArgb(90, 0, 0, 0)), 1), gr, gr.Height / 2, gr.Height / 2);
+            var dot = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255));
+            double cy = gr.Y + gr.Height / 2;
+            for (int i = -1; i <= 1; i++) dc.DrawEllipse(dot, null, new Point(gr.X + gr.Width / 2 + i * 5, cy), 1.4, 1.4);
+        }
+
         if (_position >= 0 && _position <= _duration + 0.001)
         {
             double xp = X(Math.Min(_position, _duration));
@@ -150,6 +161,28 @@ public sealed class RangeTimeline : FrameworkElement
         dc.DrawLine(grip, new Point(cx + 1.5, cy - gh), new Point(cx + 1.5, cy + gh));
     }
 
+    /// <summary>The move grip, or null when the selection is too narrow (or covers the whole clip).</summary>
+    private Rect? GripRect()
+    {
+        if (_duration <= 0) return null;
+        double xf = X(_from), xt = X(_to);
+        double w = Compact ? 26 : 34, h = Compact ? 10 : 14;
+        if (xt - xf < w + 10) return null;
+        if (_from <= 0.0001 && _to >= _duration - 0.0001) return null;
+        double y = Compact ? (ActualHeight - h) / 2 : ActualHeight - h - 4;
+        return new Rect((xf + xt) / 2 - w / 2, y, w, h);
+    }
+
+    private Drag HitTest(Point p)
+    {
+        if (GripRect() is { } gr)
+        {
+            var hit = gr; hit.Inflate(6, 6);
+            if (hit.Contains(p)) return Drag.Move;
+        }
+        return HitTest(p.X);
+    }
+
     private Drag HitTest(double x)
     {
         double xf = X(_from), xt = X(_to);
@@ -165,7 +198,8 @@ public sealed class RangeTimeline : FrameworkElement
         double x = e.GetPosition(this).X;
         if (_drag == Drag.None)
         {
-            Cursor = _duration > 0 && HitTest(x) != Drag.Head ? Cursors.SizeWE : Cursors.Hand;
+            var hit = _duration > 0 ? HitTest(e.GetPosition(this)) : Drag.Head;
+            Cursor = hit == Drag.Move ? Cursors.SizeAll : hit != Drag.Head ? Cursors.SizeWE : Cursors.Hand;
             return;
         }
         Apply(x);
@@ -176,7 +210,8 @@ public sealed class RangeTimeline : FrameworkElement
         base.OnMouseLeftButtonDown(e);
         if (_duration <= 0) return;
         double x = e.GetPosition(this).X;
-        _drag = HitTest(x);
+        _drag = HitTest(e.GetPosition(this));
+        if (_drag == Drag.Move) { _moveGrab = T(x) - _from; _moveLen = _to - _from; }
         CaptureMouse();
         Apply(x);
         e.Handled = true;
@@ -214,6 +249,14 @@ public sealed class RangeTimeline : FrameworkElement
                 break;
             case Drag.Head:
                 Seeking?.Invoke(t);
+                break;
+            case Drag.Move:
+                double f = Math.Clamp(Math.Round((t - _moveGrab) / Step) * Step, 0, Math.Max(0, _duration - _moveLen));
+                if (f + _moveLen > _duration - Step / 4) f = Math.Max(0, _duration - _moveLen); // stick to the end
+                _from = f;
+                _to = Math.Min(_duration, f + _moveLen);
+                InvalidateVisual();
+                RangeDragging?.Invoke(true);
                 break;
         }
     }

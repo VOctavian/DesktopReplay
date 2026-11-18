@@ -79,7 +79,6 @@ public partial class GalleryWindow : Window
         DurMinUnit.ItemsSource = units; DurMinUnit.SelectedIndex = 0;
         DurMaxUnit.ItemsSource = units; DurMaxUnit.SelectedIndex = 1;
         ZoomSlider.Value = Math.Clamp(app.GalleryTileWidth, 180, 560);
-        DateFrom.Language = DateTo.Language = System.Windows.Markup.XmlLanguage.GetLanguage(Loc.I.Language == "en" ? "en-US" : "ru-RU");
         _loading = false;
 
         SourceInitialized += (_, _) =>
@@ -179,7 +178,7 @@ public partial class GalleryWindow : Window
 
     private void OnGroupChanged(object sender, SelectionChangedEventArgs e) { if (!_loading) ApplyFilter(); }
 
-    private void OnDateChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnDateChanged(object? sender, EventArgs e)
     {
         if (_loading) return;
         UpdateQuickChips();

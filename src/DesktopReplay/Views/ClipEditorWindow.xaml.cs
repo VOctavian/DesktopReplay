@@ -344,7 +344,7 @@ public partial class ClipEditorWindow : Window
 
     private void OnShortsToggled(object sender, RoutedEventArgs e)
     {
-        ShortsLayer.Visibility = ShortsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        ShortsLayer.Visibility = ShortsCenterBtn.Visibility = ShortsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         LayoutShorts();
     }
 
@@ -369,6 +369,19 @@ public partial class ClipEditorWindow : Window
         Place(ShortsDimL, v.X, v.Y, cx - v.X, v.Height);
         Place(ShortsDimR, cx + cw, v.Y, v.Right - cx - cw, v.Height);
         Place(ShortsFrame, cx, v.Y, cw, v.Height);
+        bool centered = Math.Abs(_shortsX - 0.5) < 0.0001;
+        // the guide marks the video's center line while dragging; it lights up when the frame snaps to it
+        Place(ShortsGuide, v.X + v.Width / 2 - 1, v.Y, 2, v.Height);
+        ShortsGuide.Visibility = _shortsGrab >= 0 ? Visibility.Visible : Visibility.Collapsed;
+        ShortsGuide.Opacity = centered ? 0.95 : 0.35;
+        ShortsCenterBtn.IsEnabled = !centered;
+        ShortsLabel.Text = centered ? Loc.T("E.ShortsCentered") : Loc.T("E.ShortsDrag");
+    }
+
+    private void OnShortsCenter(object sender, RoutedEventArgs e)
+    {
+        _shortsX = 0.5;
+        LayoutShorts();
     }
 
     private static void Place(FrameworkElement el, double x, double y, double w, double h)
@@ -385,6 +398,7 @@ public partial class ClipEditorWindow : Window
         if (v.IsEmpty) return;
         double x = e.GetPosition(ShortsLayer).X;
         double cx = v.X + (v.Width - cw) * _shortsX;
+        if (e.ClickCount == 2) { OnShortsCenter(sender, e); e.Handled = true; return; }
         _shortsGrab = x >= cx && x <= cx + cw ? x - cx : cw / 2;
         ShortsLayer.CaptureMouse();
         MoveShorts(x);
@@ -400,6 +414,7 @@ public partial class ClipEditorWindow : Window
     {
         _shortsGrab = -1;
         ShortsLayer.ReleaseMouseCapture();
+        LayoutShorts();
         e.Handled = true;
     }
 
@@ -408,6 +423,8 @@ public partial class ClipEditorWindow : Window
         var (v, cw) = VideoGeometry();
         double free = v.Width - cw;
         _shortsX = free > 0 ? Math.Clamp((x - _shortsGrab - v.X) / free, 0, 1) : 0.5;
+        // magnet: within 12 screen pixels of the center the frame snaps to it
+        if (free > 0 && Math.Abs((_shortsX - 0.5) * free) < 12) _shortsX = 0.5;
         LayoutShorts();
     }
 

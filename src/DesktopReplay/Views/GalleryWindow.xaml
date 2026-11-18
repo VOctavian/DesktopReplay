@@ -153,9 +153,9 @@
                 <!-- Date range + duration -->
                 <WrapPanel Grid.Row="1" Margin="6,0,6,10">
                     <TextBlock Text="{l:T G.Date}" Style="{StaticResource Small}" Margin="0,0,8,0" />
-                    <DatePicker x:Name="DateFrom" SelectedDateChanged="OnDateChanged" />
+                    <v:DateBox x:Name="DateFrom" SelectedDateChanged="OnDateChanged" />
                     <TextBlock Text="—" Style="{StaticResource Small}" Margin="6,0" />
-                    <DatePicker x:Name="DateTo" SelectedDateChanged="OnDateChanged" Margin="0,0,22,0" />
+                    <v:DateBox x:Name="DateTo" SelectedDateChanged="OnDateChanged" Margin="0,0,22,0" />
 
                     <TextBlock Text="{l:T G.Length}" Style="{StaticResource Small}" Margin="0,0,8,0" />
                     <TextBlock Text="{l:T G.From}" Style="{StaticResource Small}" Margin="0,0,6,0" />
