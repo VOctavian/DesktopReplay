@@ -238,6 +238,8 @@
                             <TextBlock x:Name="EstimateText" Style="{StaticResource Hint}" Foreground="{StaticResource Info}" />
 
                             <CheckBox Margin="0,22,0,0" Content="{l:T S.Cursor}" IsChecked="{Binding CaptureCursor}" />
+                            <CheckBox Content="{l:T S.GpuPriority}" IsChecked="{Binding GpuPriorityBoost}" Checked="OnDraftChanged" Unchecked="OnDraftChanged" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:T S.GpuPriorityHint}" Margin="48,2,0,0" MaxWidth="560" HorizontalAlignment="Left" />
                             <CheckBox Content="{l:T S.Hdr}" IsChecked="{Binding HdrToSdr}" />
                             <TextBlock Style="{StaticResource Hint}" Text="{l:T S.HdrHint}" Margin="48,2,0,0" MaxWidth="560" HorizontalAlignment="Left" />
                         </StackPanel>

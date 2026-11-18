@@ -126,6 +126,8 @@ public sealed class Loc : INotifyPropertyChanged
         ["S.Bitrate"] = ("Битрейт, Мбит/с", "Bitrate, Mbps"),
         ["S.Estimate"] = ("≈ {0} МБ за минуту записи · буфер повтора ≈ {1}", "≈ {0} MB per minute · replay buffer ≈ {1}"),
         ["S.Cursor"] = ("Записывать курсор мыши", "Capture mouse cursor"),
+        ["S.GpuPriority"] = ("Приоритет захвата на видеокарте", "Capture priority on the GPU"),
+        ["S.GpuPriorityHint"] = ("Без него игра, загружающая видеокарту на 100%, «съедает» кадры записи (видео дёргается, 15–20 к/с вместо заданных). Захват занимает 1–2 мс на кадр. Если всё же заметите просадку FPS в игре — выключите.", "Without it a game at 100% GPU starves the recorder (choppy video, 15–20 fps instead of the target). Capture costs 1–2 ms per frame. Turn off only if you notice an in-game FPS drop."),
         ["S.Hdr"] = ("HDR → SDR", "HDR → SDR"),
         ["S.HdrHint"] = ("Только для мониторов с включённым HDR: захват в HDR и преобразование в обычный цветовой диапазон, чтобы видео не было блёклым.", "HDR monitors only: capture in HDR and convert to SDR so the video doesn't look washed out."),
 

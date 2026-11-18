@@ -18,11 +18,15 @@ public static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("Unhandled exception", e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => { Log.Error("Unobserved task exception", e.Exception); e.SetObserved(); };
 
+        int pr = Array.IndexOf(args, "--probe");
+        if (pr >= 0 && pr + 1 < args.Length) return SelfTest.ProbeFile(args[pr + 1]);
+
         int st = Array.IndexOf(args, "--selftest");
         if (st >= 0)
         {
             var dir = st + 1 < args.Length ? args[st + 1] : Path.Combine(Path.GetTempPath(), "DesktopReplaySelfTest");
-            return Task.Run(() => SelfTest.RunAsync(dir)).GetAwaiter().GetResult();
+            var codec = st + 2 < args.Length ? args[st + 2] : null;
+            return Task.Run(() => SelfTest.RunAsync(dir, codec)).GetAwaiter().GetResult();
         }
 
         using var single = new SingleInstance("DesktopReplay-" + Environment.UserName);

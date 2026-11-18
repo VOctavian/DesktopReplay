@@ -132,6 +132,7 @@ public sealed class CaptureSource : IDisposable
 
     private void Loop()
     {
+        Native.JoinMmcss("Audio");
         var conv = new float[0];
         try
         {

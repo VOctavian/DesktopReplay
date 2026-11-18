@@ -79,6 +79,43 @@ public static class Native
     public static extern bool QueryFullProcessImageNameW(IntPtr h, uint flags, StringBuilder sb, ref int size);
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+    [DllImport("gdi32.dll")] private static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priority);
+    [DllImport("avrt.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr AvSetMmThreadCharacteristicsW(string task, ref uint index);
+    [DllImport("avrt.dll")] private static extern bool AvSetMmThreadPriority(IntPtr handle, int priority);
+
+    private static int _gpuPrioritySet;
+
+    /// <summary>
+    /// Raises this process's GPU scheduling priority so capture/encode work is not starved by a game
+    /// that keeps the GPU at 100% (same approach as OBS). Measured under full GPU load: HIGH still drops
+    /// to ~16 fps, REALTIME holds a steady 30. Our GPU work is ~1–2 ms per frame, so the game loses little.
+    /// </summary>
+    public static void SetGpuPriority(bool boost)
+    {
+        int want = boost ? 1 : 2;
+        if (Interlocked.Exchange(ref _gpuPrioritySet, want) == want) return;
+        var self = System.Diagnostics.Process.GetCurrentProcess().Handle;
+        var classes = boost ? new[] { (5, "REALTIME"), (4, "HIGH") } : new[] { (2, "NORMAL") };
+        foreach (var (cls, name) in classes)
+        {
+            int status = D3DKMTSetProcessSchedulingPriorityClass(self, cls);
+            if (status == 0)
+            {
+                Log.Info($"GPU scheduling priority: {name}");
+                return;
+            }
+        }
+        Log.Warn("Could not raise GPU scheduling priority");
+    }
+
+    /// <summary>Registers the calling thread with MMCSS ("Capture", "Pro Audio", ...).</summary>
+    public static void JoinMmcss(string task)
+    {
+        uint index = 0;
+        var h = AvSetMmThreadCharacteristicsW(task, ref index);
+        if (h != IntPtr.Zero) AvSetMmThreadPriority(h, 1 /* AVRT_PRIORITY_HIGH */);
+    }
+
     public static string GetWindowTitle(IntPtr hwnd)
     {
         var sb = new StringBuilder(512);

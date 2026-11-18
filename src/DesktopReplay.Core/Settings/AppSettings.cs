@@ -74,6 +74,8 @@ public sealed class AppSettings
     public int CustomBitrateMbps { get; set; } = 25;
     public bool CaptureCursor { get; set; } = true;
     public bool HdrToSdr { get; set; }
+    /// <summary>Raise GPU scheduling priority so recordings keep their frame rate while a game loads the GPU.</summary>
+    public bool GpuPriorityBoost { get; set; } = true;
     public List<string> ExcludedProcesses { get; set; } = new();
 
     public AudioSettings Audio { get; set; } = new();
@@ -94,7 +96,7 @@ public sealed class AppSettings
     public bool CaptureDiffers(AppSettings o) =>
         !Monitors.SequenceEqual(o.Monitors) || Fps != o.Fps || ResolutionHeight != o.ResolutionHeight ||
         Codec != o.Codec || Quality != o.Quality || CustomBitrateMbps != o.CustomBitrateMbps ||
-        CaptureCursor != o.CaptureCursor || HdrToSdr != o.HdrToSdr || BufferFolder != o.BufferFolder ||
+        CaptureCursor != o.CaptureCursor || HdrToSdr != o.HdrToSdr || GpuPriorityBoost != o.GpuPriorityBoost || BufferFolder != o.BufferFolder ||
         Audio.MicDeviceId != o.Audio.MicDeviceId || Audio.AudioBitrateKbps != o.Audio.AudioBitrateKbps ||
         Audio.NoiseSuppression != o.Audio.NoiseSuppression;
 }

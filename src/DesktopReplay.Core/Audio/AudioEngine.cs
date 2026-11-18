@@ -205,6 +205,7 @@ public sealed class AudioEngine : IDisposable
 
     private void MixLoop()
     {
+        Native.JoinMmcss("Pro Audio");
         using var timer = new PreciseTimer();
         const int samples = Chunk * 2;
         var game = new float[samples];

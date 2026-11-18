@@ -149,7 +149,7 @@ public sealed class ReplayEngine : IDisposable
             {
                 int outH = s.ResolutionHeight <= 0 || s.ResolutionHeight >= m.Height ? m.Height : s.ResolutionHeight;
                 int outW = (int)Math.Round(outH * (double)m.Width / m.Height) & ~1;
-                var cfg = new VideoConfig(s.Fps, s.ResolutionHeight, s.Codec, Storage.VideoBitrate(s, outW, outH), s.CaptureCursor, s.HdrToSdr);
+                var cfg = new VideoConfig(s.Fps, s.ResolutionHeight, s.Codec, Storage.VideoBitrate(s, outW, outH), s.CaptureCursor, s.HdrToSdr, s.GpuPriorityBoost);
                 var vp = new VideoPipeline(m, cfg, index++, t0, store.Add, () => _exclusions.Rects);
                 vp.Failed += OnPipelineFailed;
                 session.Video.Add(vp);
@@ -403,7 +403,7 @@ public sealed class ReplayEngine : IDisposable
                     int i = 0;
                     foreach (var m in Monitors.Resolve(_settings.Monitors))
                     {
-                        var vp = new VideoPipeline(m, new VideoConfig(_settings.Fps, 0, VideoCodec.H264, 5_000_000, _settings.CaptureCursor, false), i++, Clock.NowUs(), _ => { }, () => _exclusions.Rects);
+                        var vp = new VideoPipeline(m, new VideoConfig(_settings.Fps, 0, VideoCodec.H264, 5_000_000, _settings.CaptureCursor, false, _settings.GpuPriorityBoost), i++, Clock.NowUs(), _ => { }, () => _exclusions.Rects);
                         vp.Start();
                         list.Add(vp);
                     }

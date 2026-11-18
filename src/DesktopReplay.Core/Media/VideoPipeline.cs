@@ -17,7 +17,7 @@ using ID3D11Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 
 namespace DesktopReplay.Core.Media;
 
-public sealed record VideoConfig(int Fps, int OutputHeight, VideoCodec Codec, long BitrateBps, bool CaptureCursor, bool HdrToSdr);
+public sealed record VideoConfig(int Fps, int OutputHeight, VideoCodec Codec, long BitrateBps, bool CaptureCursor, bool HdrToSdr, bool GpuPriorityBoost = true);
 
 public sealed record Screenshot(int Width, int Height, byte[] Bgra, int MonitorNumber);
 
@@ -50,6 +50,8 @@ public sealed unsafe class VideoPipeline : IDisposable
     private readonly object _texLock = new();
     private int _srcW, _srcH;
     private bool _hasFrame;
+    private Direct3D11CaptureFrame? _pendingFrame;  // newest frame from Windows, not yet copied
+    private bool _workMasked;                       // _work currently has exclusion masks painted on it
     private bool _sizeChanged;
     private Format _captureFormat = Format.B8G8R8A8_UNorm;
 
@@ -115,6 +117,17 @@ public sealed unsafe class VideoPipeline : IDisposable
                 levels, out _device, out _context).CheckError();
         }
         using (var mt = _device!.QueryInterface<ID3D11Multithread>()) mt.SetMultithreadProtected(true);
+        // Keep capture/encode GPU work from being starved by a game running at 100% GPU.
+        Native.SetGpuPriority(_cfg.GpuPriorityBoost);
+        if (_cfg.GpuPriorityBoost)
+        {
+            try
+            {
+                using var dxgiDevice = _device.QueryInterface<IDXGIDevice>();
+                dxgiDevice.SetGPUThreadPriority(7);
+            }
+            catch { }
+        }
         _context1 = _context!.QueryInterface<ID3D11DeviceContext1>();
         _videoDevice = _device.QueryInterface<ID3D11VideoDevice>();
         _videoContext = _context.QueryInterface<ID3D11VideoContext>();
@@ -130,7 +143,7 @@ public sealed unsafe class VideoPipeline : IDisposable
             pixelFormat = DirectXPixelFormat.R16G16B16A16Float;
             _captureFormat = Format.R16G16B16A16_Float;
         }
-        _framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(_winrtDevice, pixelFormat, 2, _item.Size);
+        _framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(_winrtDevice, pixelFormat, PoolBuffers, _item.Size);
         _session = _framePool.CreateCaptureSession(_item);
         try { _session.IsCursorCaptureEnabled = _cfg.CaptureCursor; } catch { }
         try { _session.IsBorderRequired = false; } catch { }
@@ -139,17 +152,23 @@ public sealed unsafe class VideoPipeline : IDisposable
         _session.StartCapture();
     }
 
+    private const int PoolBuffers = 3;
+
+    /// <summary>
+    /// Keeps a reference to the newest frame only. The GPU copy happens once per output tick on the
+    /// encode thread — a 144 Hz game would otherwise cost 144 full-screen copies per second.
+    /// </summary>
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
         try
         {
-            using var frame = sender.TryGetNextFrame();
+            var frame = sender.TryGetNextFrame();
             if (frame == null) return;
             var size = frame.ContentSize;
-            using var tex = CaptureInterop.GetTexture(frame.Surface);
+            Direct3D11CaptureFrame? old;
             lock (_texLock)
             {
-                if (_latest == null) return;
+                if (_latest == null) { frame.Dispose(); return; }
                 if (size.Width != _srcW || size.Height != _srcH)
                 {
                     // Resolution changed (e.g. a game switched display mode). Re-create textures on the encode thread;
@@ -157,13 +176,16 @@ public sealed unsafe class VideoPipeline : IDisposable
                     _srcW = size.Width;
                     _srcH = size.Height;
                     _sizeChanged = true;
-                    sender.Recreate(_winrtDevice, _captureFormat == Format.R16G16B16A16_Float ? DirectXPixelFormat.R16G16B16A16Float : DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+                    frame.Dispose();
+                    sender.Recreate(_winrtDevice, _captureFormat == Format.R16G16B16A16_Float ? DirectXPixelFormat.R16G16B16A16Float : DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolBuffers, size);
                     return;
                 }
-                if (_sizeChanged) return;
-                _context!.CopyResource(_latest, tex);
+                if (_sizeChanged) { frame.Dispose(); return; }
+                old = _pendingFrame;
+                _pendingFrame = frame;
                 _hasFrame = true;
             }
+            old?.Dispose();
         }
         catch (Exception ex)
         {
@@ -348,10 +370,13 @@ public sealed unsafe class VideoPipeline : IDisposable
 
     private void EncodeLoop()
     {
+        Native.JoinMmcss("Capture");
         using var timer = new PreciseTimer();
         long frameUs = 1_000_000 / _cfg.Fps;
         long startUs = Clock.NowUs();
         long index = 0;
+        // Stats, logged every 10 s.
+        long statFrames = 0, statSkipped = 0, statWorkUs = 0, statMaxUs = 0, statLateUs = 0, statStart = startUs;
         try
         {
             while (_running)
@@ -364,14 +389,30 @@ public sealed unsafe class VideoPipeline : IDisposable
                 // Fell behind (system hiccup): skip missed ticks instead of bursting.
                 if (now - targetUs > frameUs * 2)
                 {
-                    index = (now - startUs) * _cfg.Fps / 1_000_000;
+                    long newIndex = (now - startUs) * _cfg.Fps / 1_000_000;
+                    statSkipped += newIndex - index;
+                    index = newIndex;
                     targetUs = startUs + index * 1_000_000 / _cfg.Fps;
                 }
                 index++;
+                statLateUs = Math.Max(statLateUs, now - targetUs);
 
                 if (!_hasFrame && !_sizeChanged) continue;
+                long t1 = Clock.NowUs();
                 ProcessFrame();
                 EncodeFrame(targetUs - _t0Us);
+                long work = Clock.NowUs() - t1;
+                statFrames++;
+                statWorkUs += work;
+                statMaxUs = Math.Max(statMaxUs, work);
+
+                if (now - statStart >= 10_000_000)
+                {
+                    double secs = (now - statStart) / 1e6;
+                    Log.Info($"Video {_monitor.Number}: {statFrames / secs:F1} fps encoded, {statSkipped} ticks skipped, work avg {statWorkUs / Math.Max(1, statFrames) / 1000.0:F1} ms max {statMaxUs / 1000.0:F1} ms, max late {statLateUs / 1000.0:F1} ms");
+                    statFrames = statSkipped = statWorkUs = statMaxUs = statLateUs = 0;
+                    statStart = now;
+                }
             }
             Flush();
         }
@@ -385,10 +426,13 @@ public sealed unsafe class VideoPipeline : IDisposable
 
     private void ProcessFrame()
     {
+        Direct3D11CaptureFrame? frame;
         lock (_texLock)
         {
             if (_sizeChanged)
             {
+                _pendingFrame?.Dispose();
+                _pendingFrame = null;
                 CreateTextures(_srcW, _srcH);
                 UpdateRects();
                 _sizeChanged = false;
@@ -396,10 +440,24 @@ public sealed unsafe class VideoPipeline : IDisposable
                 Log.Info($"Monitor {_monitor.Number} source size changed to {_srcW}x{_srcH}");
                 return;
             }
-            _context!.CopyResource(_work, _latest);
+            frame = _pendingFrame;
+            _pendingFrame = null;
+        }
+
+        // A new frame from Windows: one GPU copy into _latest. Without a new frame the previous one is repeated.
+        bool fresh = false;
+        if (frame != null)
+        {
+            using (frame)
+            using (var tex = CaptureInterop.GetTexture(frame.Surface))
+                _context!.CopyResource(_latest, tex);
+            fresh = true;
         }
 
         var rects = _exclusions();
+        // _work = _latest + masks; it only needs refreshing when the picture or the masks change.
+        if (fresh || _workMasked || rects.Length > 0) _context!.CopyResource(_work, _latest);
+        _workMasked = false;
         if (rects.Length > 0)
         {
             var local = new List<RawRect>(rects.Length);
@@ -414,6 +472,7 @@ public sealed unsafe class VideoPipeline : IDisposable
             if (local.Count > 0)
             {
                 _context1!.ClearView(_workRtv!, new Color4(0, 0, 0, 1), local.ToArray());
+                _workMasked = true;
             }
         }
 
@@ -519,6 +578,7 @@ public sealed unsafe class VideoPipeline : IDisposable
         _thread?.Join(3000);
         try { _session?.Dispose(); } catch { }
         try { _framePool?.Dispose(); } catch { }
+        lock (_texLock) { _pendingFrame?.Dispose(); _pendingFrame = null; }
         _session = null;
         _framePool = null;
         lock (_texLock)
