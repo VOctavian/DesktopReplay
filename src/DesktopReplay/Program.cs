@@ -21,6 +21,26 @@ public static class Program
         int pr = Array.IndexOf(args, "--probe");
         if (pr >= 0 && pr + 1 < args.Length) return SelfTest.ProbeFile(args[pr + 1]);
 
+        // --export-test in out from to [shorts] [merge]: exercises the gallery cut pipeline
+        int ex = Array.IndexOf(args, "--export-test");
+        if (ex >= 0 && ex + 4 < args.Length) return SelfTest.ExportTest(args[ex + 1], args[ex + 2],
+            double.Parse(args[ex + 3], System.Globalization.CultureInfo.InvariantCulture),
+            double.Parse(args[ex + 4], System.Globalization.CultureInfo.InvariantCulture),
+            args.Contains("shorts"), args.Contains("merge"));
+
+        // --gallery-only [folder]: just the gallery window (no engine, settings are not saved) for UI testing
+        int go = Array.IndexOf(args, "--gallery-only");
+        if (go >= 0)
+        {
+            Services.WindowHelper.AllowCapture = true;
+            var settings = DesktopReplay.Core.Settings.SettingsStore.Load();
+            if (go + 1 < args.Length && Directory.Exists(args[go + 1])) { settings.OutputFolder = args[go + 1]; settings.RecordingsFolder = ""; }
+            Loc.I.SetLanguage(settings.Language);
+            var wpf = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
+            wpf.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/DesktopReplay;component/Themes/Theme.xaml") });
+            return wpf.Run(new Views.GalleryWindow(() => settings, () => { }));
+        }
+
         int st = Array.IndexOf(args, "--selftest");
         if (st >= 0)
         {

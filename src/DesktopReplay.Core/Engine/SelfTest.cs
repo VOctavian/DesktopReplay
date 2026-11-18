@@ -73,6 +73,33 @@ public static class SelfTest
     private static string Version() => ffmpeg.av_version_info();
 
     /// <summary>"DesktopReplay.exe --probe file.mp4": writes a stream/frame-rate report next to the file.</summary>
+    public static int ExportTest(string input, string output, double from, double to, bool shorts, bool merge)
+    {
+        FF.Init();
+        var lines = new List<string>();
+        try
+        {
+            var info = Library.MediaProbe.Probe(input);
+            lines.Add($"source: {info.Duration:F2}s {info.Width}x{info.Height} {info.Fps:F2}fps {info.VideoCodec}, {info.Audio.Count} audio");
+            var tracks = info.Audio.Select((a, i) => new Library.AudioTrackEdit(a.Index, a.Title, i != 1, i == 2 ? 0.5 : 1.0,
+                i == 3 ? from + (to - from) / 2 : from, to)).ToList();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Library.ClipExporter.Export(new Library.ExportRequest(input, output, from, to, shorts, 0.25, tracks, merge, "Mix"), null, CancellationToken.None);
+            lines.Add($"export took {sw.ElapsedMilliseconds} ms");
+            int r = Probe(output, lines.Add, 0);
+            var thumbs = Library.MediaLibrary.Filmstrip(output, 4, 160);
+            lines.Add($"filmstrip: {thumbs.Count(t => t != null)}/4 frames");
+            File.WriteAllLines(output + ".probe.txt", lines);
+            return r;
+        }
+        catch (Exception ex)
+        {
+            lines.Add("FAILED: " + ex);
+            File.WriteAllLines(output + ".probe.txt", lines);
+            return 1;
+        }
+    }
+
     public static int ProbeFile(string path)
     {
         FF.Init();

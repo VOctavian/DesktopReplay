@@ -123,6 +123,25 @@ public partial class App : Application
         UpdateTray();
     }
 
+    /// <summary>Persists UI-only preferences (gallery layout) without touching the engine.</summary>
+    public void SaveUiSettings() => SaveSettings();
+
+    private Views.GalleryWindow? _gallery;
+
+    public void ShowGallery()
+    {
+        if (_gallery != null)
+        {
+            if (_gallery.WindowState == WindowState.Minimized) _gallery.WindowState = WindowState.Normal;
+            _gallery.Activate();
+            return;
+        }
+        _gallery = new Views.GalleryWindow(() => Settings, SaveUiSettings);
+        _gallery.Closed += (_, _) => _gallery = null;
+        _gallery.Show();
+        _gallery.Activate();
+    }
+
     private void SaveSettings()
     {
         try { SettingsStore.Save(_settings); }

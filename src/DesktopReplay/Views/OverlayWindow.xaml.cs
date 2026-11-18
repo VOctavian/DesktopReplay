@@ -198,6 +198,7 @@ public partial class OverlayWindow : Window
         _app.Screenshot();
     }
     private void OnOpenFolder(object sender, RoutedEventArgs e) => _app.OpenFolder();
+    private void OnOpenGallery(object sender, RoutedEventArgs e) { Close2(); _app.ShowGallery(); }
     private void OnOpenSettings(object sender, RoutedEventArgs e) => ShowSettings();
 
     // ---------- Settings ----------

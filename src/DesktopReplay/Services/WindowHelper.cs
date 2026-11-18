@@ -45,6 +45,15 @@ public static class WindowHelper
         SetWindowLong(h, GWL_EXSTYLE, ex);
     }
 
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    /// <summary>Dark title bar to match the app theme (Windows 10 2004+ / 11).</summary>
+    public static void UseDarkTitleBar(Window w)
+    {
+        int on = 1;
+        DwmSetWindowAttribute(new WindowInteropHelper(w).EnsureHandle(), 20, ref on, sizeof(int));
+    }
+
     public static void ForceForeground(Window w) => SetForegroundWindow(new WindowInteropHelper(w).Handle);
 
     /// <summary>Monitor rectangles in physical pixels: the one under the cursor, and the one with the foreground window.</summary>

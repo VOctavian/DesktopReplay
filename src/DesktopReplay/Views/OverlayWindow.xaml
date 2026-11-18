@@ -118,7 +118,10 @@
                             <Border CornerRadius="2" Background="{StaticResource Hover}" />
                             <Border x:Name="StorageBar" CornerRadius="2" Background="{StaticResource Info}" HorizontalAlignment="Left" Width="0" />
                         </Grid>
-                        <Button Click="OnOpenFolder" HorizontalAlignment="Stretch" Content="{l:T OpenFolder}" />
+                        <Button Style="{StaticResource AccentButton}" Click="OnOpenGallery" HorizontalAlignment="Stretch">
+                            <TextBlock Text="{l:T OpenGallery}" Foreground="White" FontWeight="SemiBold" />
+                        </Button>
+                        <Button Click="OnOpenFolder" HorizontalAlignment="Stretch" Content="{l:T OpenFolder}" Margin="0,8,0,0" />
                     </StackPanel>
                 </Border>
                 <!-- Settings -->

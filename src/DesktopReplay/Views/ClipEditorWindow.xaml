@@ -1,0 +1,153 @@
+<Window x:Class="DesktopReplay.Views.ClipEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:DesktopReplay"
+        xmlns:v="clr-namespace:DesktopReplay.Views"
+        Width="1280" Height="940" MinWidth="900" MinHeight="640"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Bg}"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}"
+        PreviewKeyDown="OnKeyDown">
+    <Window.Resources>
+        <FontFamily x:Key="Icons">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+        <Style x:Key="Small" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="QuickLen" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Margin" Value="0,0,5,0" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Video -->
+        <Grid x:Name="VideoHost" Background="Black" ClipToBounds="True" SizeChanged="OnVideoHostSizeChanged" MouseLeftButtonDown="OnVideoClick">
+            <MediaElement x:Name="Player" LoadedBehavior="Manual" UnloadedBehavior="Manual" ScrubbingEnabled="True" Stretch="Uniform"
+                          MediaOpened="OnMediaOpened" MediaFailed="OnMediaFailed" MediaEnded="OnMediaEnded" />
+            <Canvas x:Name="ShortsLayer" Visibility="Collapsed" Background="Transparent"
+                    MouseLeftButtonDown="OnShortsDown" MouseMove="OnShortsMove" MouseLeftButtonUp="OnShortsUp">
+                <Rectangle x:Name="ShortsDimL" Fill="#B0000000" />
+                <Rectangle x:Name="ShortsDimR" Fill="#B0000000" />
+                <Border x:Name="ShortsFrame" BorderBrush="{StaticResource Accent}" BorderThickness="2" Background="#01000000" Cursor="SizeWE">
+                    <Border Background="#C0000000" CornerRadius="4" Padding="8,3" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0">
+                        <TextBlock Text="{l:T E.ShortsDrag}" FontSize="12" Foreground="White" />
+                    </Border>
+                </Border>
+            </Canvas>
+            <TextBlock x:Name="PlayerError" Foreground="{StaticResource Muted}" TextWrapping="Wrap" MaxWidth="560" TextAlignment="Center"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+        </Grid>
+
+        <!-- Transport -->
+        <Grid Grid.Row="1" Margin="14,8,14,2">
+            <StackPanel Orientation="Horizontal">
+                <Button Style="{StaticResource IconButton}" Content="&#xE892;" ToolTip="{l:T E.ToStart}" Click="OnToStart" />
+                <Button Style="{StaticResource IconButton}" Content="&#xE76B;" ToolTip="{l:T E.PrevFrame}" Click="OnPrevFrame" />
+                <Button x:Name="PlayBtn" Style="{StaticResource IconButton}" FontSize="20" Padding="10,4" ToolTip="{l:T E.Play}" Click="OnPlayPause" Content="&#xE768;" />
+                <Button Style="{StaticResource IconButton}" Content="&#xE76C;" ToolTip="{l:T E.NextFrame}" Click="OnNextFrame" />
+                <TextBlock x:Name="TimeText" FontFamily="Consolas" FontSize="13" VerticalAlignment="Center" Margin="12,0,0,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="MuteBtn" Style="{StaticResource IconButton}" Content="&#xE767;" Click="OnMute" ToolTip="{l:T E.Volume}" />
+                <Slider x:Name="VolumeSlider" Width="110" Minimum="0" Maximum="1" Value="0.8" VerticalAlignment="Center" ValueChanged="OnVolumeChanged" />
+                <Button Style="{StaticResource IconButton}" Content="&#xE740;" ToolTip="{l:T E.Fullscreen}" Click="OnFullscreen" Margin="10,0,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Timeline -->
+        <v:RangeTimeline x:Name="Timeline" Grid.Row="2" Height="64" Margin="14,4,14,8" />
+
+        <!-- Editing -->
+        <Border x:Name="EditPanel" Grid.Row="3" Background="{StaticResource Panel}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="20,14,20,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="5*" />
+                    <ColumnDefinition Width="28" />
+                    <ColumnDefinition Width="6*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <WrapPanel>
+                        <TextBlock Text="{l:T E.Selection}" Style="{StaticResource Small}" Margin="0,0,8,0" />
+                        <TextBlock x:Name="SelectionText" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SizeText" Style="{StaticResource Small}" Margin="10,0,0,0" />
+                    </WrapPanel>
+
+                    <TextBlock Text="{l:T E.Length}" Style="{StaticResource Label}" Margin="0,14,0,6" />
+                    <WrapPanel>
+                        <TextBox x:Name="LengthBox" Width="70" KeyDown="OnLengthKey" LostFocus="OnLengthCommit" Margin="0,0,6,0" />
+                        <TextBlock Text="{l:T E.Seconds}" Style="{StaticResource Small}" Margin="0,0,12,0" />
+                        <Button Style="{StaticResource QuickLen}" Content="5" Tag="5" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="10" Tag="10" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="15" Tag="15" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="20" Tag="20" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="30" Tag="30" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="60" Tag="60" Click="OnQuickLength" />
+                        <Button Style="{StaticResource QuickLen}" Content="{l:T E.Whole}" Tag="all" Click="OnQuickLength" />
+                    </WrapPanel>
+
+                    <CheckBox x:Name="ShortsCheck" Content="{l:T E.Shorts}" Margin="0,16,0,0" Checked="OnShortsToggled" Unchecked="OnShortsToggled" />
+
+                    <TextBlock Text="{l:T E.Name}" Style="{StaticResource Label}" Margin="0,14,0,6" />
+                    <DockPanel>
+                        <TextBlock Text=".mp4" DockPanel.Dock="Right" Style="{StaticResource Small}" Margin="6,0,0,0" />
+                        <TextBox x:Name="NameBox" />
+                    </DockPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <DockPanel>
+                        <CheckBox x:Name="MergeCheck" Content="{l:T E.Merge}" DockPanel.Dock="Right" VerticalAlignment="Center" />
+                        <TextBlock Text="{l:T E.Tracks}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+                        <StackPanel x:Name="TracksPanel" />
+                    </ScrollViewer>
+                    <TextBlock x:Name="NoAudioText" Text="{l:T E.NoAudio}" Style="{StaticResource Small}" Visibility="Collapsed" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Sticky footer -->
+        <Border x:Name="Footer" Grid.Row="4" Background="{StaticResource Panel2}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="20,10">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ProgressBar x:Name="Progress" Width="220" Height="6" Minimum="0" Maximum="1" Visibility="Collapsed" Margin="0,0,12,0"
+                                 Foreground="{StaticResource Accent}" Background="{StaticResource Hover}" BorderThickness="0" />
+                    <TextBlock x:Name="StatusText" Style="{StaticResource Small}" TextTrimming="CharacterEllipsis" MaxWidth="520" />
+                    <Button x:Name="CancelBtn" Style="{StaticResource GhostButton}" Content="{l:T Cancel}" Click="OnCancelExport" Visibility="Collapsed" Margin="8,0,0,0" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="DeleteBtn" Click="OnDelete" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74D;" FontFamily="{StaticResource Icons}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:T G.Delete}" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="SaveCopyBtn" Click="OnSaveCopy" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="{StaticResource Icons}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:T E.SaveCopy}" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="ReplaceBtn" Style="{StaticResource AccentButton}" Click="OnReplace">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8C6;" FontFamily="{StaticResource Icons}" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="White" />
+                            <TextBlock Text="{l:T E.Replace}" Foreground="White" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

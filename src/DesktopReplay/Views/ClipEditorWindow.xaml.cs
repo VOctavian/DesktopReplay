@@ -1,0 +1,580 @@
+using System.Globalization;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using DesktopReplay.Core;
+using DesktopReplay.Core.Library;
+using DesktopReplay.Services;
+
+namespace DesktopReplay.Views;
+
+/// <summary>Preview player and cutter: trim range, 9:16 crop, per-track audio edits, export.</summary>
+public partial class ClipEditorWindow : Window
+{
+    private sealed class TrackRow
+    {
+        public required AudioStreamInfo Info;
+        public required CheckBox Include;
+        public required Slider Volume;
+        public required RangeTimeline Range;
+        public required string Title;
+    }
+
+    private readonly LibraryEntry _entry;
+    private readonly bool _autoPlay;
+    private readonly DispatcherTimer _tick;
+    private readonly List<TrackRow> _tracks = new();
+    private MediaInfo? _info;
+    private double _duration, _fps = 30;
+    private bool _playing, _opened, _fullscreen, _busy;
+    private double _shortsX = 0.5, _shortsGrab = -1;
+    private WindowState _prevState;
+    private CancellationTokenSource? _exportCts;
+
+    /// <summary>True when a file was created, replaced or deleted (the gallery rescans).</summary>
+    public bool FilesChanged { get; private set; }
+
+    public ClipEditorWindow(LibraryEntry entry, bool edit)
+    {
+        _entry = entry;
+        _autoPlay = !edit;
+        InitializeComponent();
+        Title = entry.Name;
+        NameBox.Text = Path.GetFileNameWithoutExtension(entry.Path);
+        VolumeSlider.Value = 0.8;
+
+        _tick = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
+        _tick.Tick += (_, _) => OnTick();
+
+        Timeline.RangeDragging += isFrom => { Pause(); Seek(isFrom ? Timeline.From : Timeline.To); UpdateSelectionInfo(); };
+        Timeline.Seeking += t => { Pause(); Seek(t); };
+
+        SourceInitialized += (_, _) =>
+        {
+            WindowHelper.UseDarkTitleBar(this);
+            WindowHelper.ExcludeFromCapture(this);
+        };
+        Loaded += async (_, _) => await LoadAsync();
+        Closed += (_, _) =>
+        {
+            _exportCts?.Cancel();
+            _tick.Stop();
+            ClosePlayer();
+        };
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _info = await Task.Run(() => MediaProbe.Probe(_entry.Path));
+        }
+        catch (Exception ex)
+        {
+            ShowError(Loc.F("E.OpenFailed", ex.Message));
+            SetBusy(true);
+            DeleteBtn.IsEnabled = true;
+            return;
+        }
+        _duration = _info.Duration;
+        _fps = _info.Fps;
+        Timeline.Duration = _duration;
+        Timeline.From = 0;
+        Timeline.To = _duration;
+        Timeline.Position = 0;
+        BuildTracks();
+        UpdateSelectionInfo();
+        UpdateTime();
+
+        Player.Volume = VolumeSlider.Value;
+        Player.Source = new Uri(_entry.Path);
+        Player.Pause(); // opens the media and shows the first frame
+        _tick.Start();
+
+        try
+        {
+            var strip = await Task.Run(() => MediaLibrary.Filmstrip(_entry.Path, 14, 180));
+            Timeline.Strip = strip.Cast<ImageSource?>().ToList();
+        }
+        catch (Exception ex) { Log.Warn($"Filmstrip failed: {ex.Message}"); }
+    }
+
+    // ---------- audio tracks ----------
+
+    private void BuildTracks()
+    {
+        TracksPanel.Children.Clear();
+        _tracks.Clear();
+        int n = 1;
+        foreach (var a in _info!.Audio)
+        {
+            string title = string.IsNullOrWhiteSpace(a.Title) ? Loc.F("E.Track", n) : a.Title;
+            var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
+
+            var include = new CheckBox { IsChecked = true, VerticalAlignment = VerticalAlignment.Center, ToolTip = Loc.T("E.TrackInclude") };
+            include.Content = new TextBlock { Text = $"{n}. {title}", TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 120 };
+            var range = new RangeTimeline { Compact = true, Height = 26, Duration = _duration, From = 0, To = _duration, Margin = new Thickness(4, 0, 8, 0) };
+            var vol = new Slider { Minimum = 0, Maximum = 2, Value = 1, VerticalAlignment = VerticalAlignment.Center, ToolTip = Loc.T("E.TrackVolume") };
+            var volText = new TextBlock { Text = "100%", Foreground = (Brush)FindResource("Muted"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+            vol.ValueChanged += (_, _) => volText.Text = $"{vol.Value * 100:0}%";
+            include.Checked += (_, _) => { range.Opacity = vol.Opacity = 1; range.IsEnabled = vol.IsEnabled = true; UpdateMergeState(); };
+            include.Unchecked += (_, _) => { range.Opacity = vol.Opacity = 0.35; range.IsEnabled = vol.IsEnabled = false; UpdateMergeState(); };
+            range.RangeDragging += isFrom => { Pause(); Seek(isFrom ? range.From : range.To); };
+            range.Seeking += t => { Pause(); Seek(t); };
+
+            Grid.SetColumn(range, 1); Grid.SetColumn(vol, 2); Grid.SetColumn(volText, 3);
+            grid.Children.Add(include); grid.Children.Add(range); grid.Children.Add(vol); grid.Children.Add(volText);
+            TracksPanel.Children.Add(grid);
+            _tracks.Add(new TrackRow { Info = a, Include = include, Volume = vol, Range = range, Title = title });
+            n++;
+        }
+        NoAudioText.Visibility = _tracks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateMergeState();
+    }
+
+    private void UpdateMergeState()
+    {
+        int included = _tracks.Count(t => t.Include.IsChecked == true);
+        MergeCheck.IsEnabled = included > 1;
+        if (included <= 1) MergeCheck.IsChecked = false;
+    }
+
+    // ---------- playback ----------
+
+    private void OnMediaOpened(object sender, RoutedEventArgs e)
+    {
+        _opened = true;
+        PlayerError.Visibility = Visibility.Collapsed;
+        LayoutShorts();
+        if (_autoPlay) Play();
+    }
+
+    private void OnMediaFailed(object? sender, ExceptionRoutedEventArgs e)
+    {
+        Log.Warn($"Player failed for {_entry.Path}: {e.ErrorException?.Message}");
+        ShowError(Loc.T("E.PlayerFailed"));
+    }
+
+    private void ShowError(string text)
+    {
+        PlayerError.Text = text;
+        PlayerError.Visibility = Visibility.Visible;
+    }
+
+    private void OnMediaEnded(object sender, RoutedEventArgs e) => Pause();
+
+    private double Position => _opened ? Player.Position.TotalSeconds : Timeline.Position;
+
+    private void Play()
+    {
+        if (!_opened) return;
+        double pos = Position;
+        if (pos < Timeline.From - 0.01 || pos >= Timeline.To - 0.02) Seek(Timeline.From);
+        Player.Play();
+        _playing = true;
+        PlayBtn.Content = "";
+    }
+
+    private void Pause()
+    {
+        if (!_playing) return;
+        Player.Pause();
+        _playing = false;
+        PlayBtn.Content = "";
+        Timeline.Position = Position;
+        UpdateTime();
+    }
+
+    private void Seek(double t)
+    {
+        t = Math.Clamp(t, 0, _duration);
+        if (_opened) Player.Position = TimeSpan.FromSeconds(t);
+        Timeline.Position = t;
+        foreach (var tr in _tracks) tr.Range.Position = t;
+        UpdateTime();
+    }
+
+    private void OnTick()
+    {
+        if (!_playing) return;
+        double pos = Position;
+        if (pos >= Timeline.To - 0.001)
+        {
+            Pause();
+            Seek(Timeline.To);
+            return;
+        }
+        Timeline.Position = pos;
+        foreach (var tr in _tracks) tr.Range.Position = pos;
+        UpdateTime();
+    }
+
+    private void UpdateTime() =>
+        TimeText.Text = $"{RangeTimeline.FormatTime(Timeline.Position)} / {RangeTimeline.FormatTime(_duration)}";
+
+    private void OnPlayPause(object sender, RoutedEventArgs e) { if (_playing) Pause(); else Play(); }
+    private void OnToStart(object sender, RoutedEventArgs e) { Pause(); Seek(Timeline.From); }
+    private void OnPrevFrame(object sender, RoutedEventArgs e) => StepFrame(-1);
+    private void OnNextFrame(object sender, RoutedEventArgs e) => StepFrame(1);
+
+    private void StepFrame(int dir)
+    {
+        Pause();
+        double frame = 1.0 / Math.Max(1, _fps);
+        // align to the frame grid so repeated steps don't drift
+        double cur = Math.Round(Position / frame) * frame;
+        Seek(cur + dir * frame);
+    }
+
+    private void OnVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (Player == null) return;
+        Player.Volume = VolumeSlider.Value;
+        if (Player.IsMuted && VolumeSlider.Value > 0) { Player.IsMuted = false; MuteBtn.Content = ""; }
+    }
+
+    private void OnMute(object sender, RoutedEventArgs e)
+    {
+        Player.IsMuted = !Player.IsMuted;
+        MuteBtn.Content = Player.IsMuted ? "" : "";
+    }
+
+    private void OnVideoClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2) ToggleFullscreen();
+        else if (_playing) Pause(); else Play();
+    }
+
+    private void OnFullscreen(object sender, RoutedEventArgs e) => ToggleFullscreen();
+
+    private void ToggleFullscreen()
+    {
+        _fullscreen = !_fullscreen;
+        if (_fullscreen)
+        {
+            _prevState = WindowState;
+            WindowStyle = WindowStyle.None;
+            WindowState = WindowState.Normal; // re-maximize so the taskbar is covered
+            WindowState = WindowState.Maximized;
+            EditPanel.Visibility = Footer.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            WindowStyle = WindowStyle.SingleBorderWindow;
+            WindowState = _prevState;
+            EditPanel.Visibility = Footer.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.FocusedElement is TextBox) return;
+        switch (e.Key)
+        {
+            case Key.Space: if (_playing) Pause(); else Play(); break;
+            case Key.Left: StepFrame(-1); break;
+            case Key.Right: StepFrame(1); break;
+            case Key.Home: Pause(); Seek(Timeline.From); break;
+            case Key.End: Pause(); Seek(Timeline.To); break;
+            case Key.F: ToggleFullscreen(); break;
+            case Key.Escape when _fullscreen: ToggleFullscreen(); break;
+            default: return;
+        }
+        e.Handled = true;
+    }
+
+    // ---------- selection ----------
+
+    private void UpdateSelectionInfo()
+    {
+        double len = Timeline.To - Timeline.From;
+        SelectionText.Text = $"{RangeTimeline.FormatTime(Timeline.From)} – {RangeTimeline.FormatTime(Timeline.To)}  ·  {RangeTimeline.FormatTime(len)}";
+        long est = _duration > 0 ? (long)(_entry.Size * len / _duration) : 0;
+        SizeText.Text = "≈ " + WindowHelper.FormatBytes(est);
+        if (!LengthBox.IsKeyboardFocused) LengthBox.Text = len.ToString("0.#", CultureInfo.CurrentCulture);
+    }
+
+    private void ApplyLength(double n)
+    {
+        if (_duration <= 0) return;
+        n = Math.Clamp(Math.Round(n / Timeline.Step) * Timeline.Step, Timeline.Step, _duration);
+        double from = Timeline.From, to = from + n;
+        if (to > _duration) { to = _duration; from = Math.Max(0, Timeline.SnapValue(to - n)); }
+        Timeline.From = from;
+        Timeline.To = to;
+        Pause();
+        Seek(from);
+        UpdateSelectionInfo();
+    }
+
+    private void OnQuickLength(object sender, RoutedEventArgs e)
+    {
+        if ((string)((Button)sender).Tag == "all")
+        {
+            Timeline.From = 0;
+            Timeline.To = _duration;
+            Pause();
+            Seek(0);
+            UpdateSelectionInfo();
+        }
+        else ApplyLength(double.Parse((string)((Button)sender).Tag, CultureInfo.InvariantCulture));
+    }
+
+    private void OnLengthKey(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) { OnLengthCommit(sender, e); e.Handled = true; }
+    }
+
+    private void OnLengthCommit(object sender, RoutedEventArgs e)
+    {
+        var s = LengthBox.Text.Trim().Replace(',', '.');
+        if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0) ApplyLength(v);
+        else UpdateSelectionInfo();
+        if (e is KeyEventArgs) Keyboard.ClearFocus();
+        UpdateSelectionInfo();
+    }
+
+    // ---------- shorts crop ----------
+
+    private void OnShortsToggled(object sender, RoutedEventArgs e)
+    {
+        ShortsLayer.Visibility = ShortsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutShorts();
+    }
+
+    private void OnVideoHostSizeChanged(object sender, SizeChangedEventArgs e) => LayoutShorts();
+
+    private (Rect Video, double CropW) VideoGeometry()
+    {
+        double nw = _info?.Width ?? Player.NaturalVideoWidth, nh = _info?.Height ?? Player.NaturalVideoHeight;
+        double hw = VideoHost.ActualWidth, hh = VideoHost.ActualHeight;
+        if (nw <= 0 || nh <= 0 || hw <= 0 || hh <= 0) return (Rect.Empty, 0);
+        double s = Math.Min(hw / nw, hh / nh);
+        var r = new Rect((hw - nw * s) / 2, (hh - nh * s) / 2, nw * s, nh * s);
+        return (r, Math.Min(r.Width, r.Height * 9 / 16));
+    }
+
+    private void LayoutShorts()
+    {
+        if (ShortsLayer.Visibility != Visibility.Visible) return;
+        var (v, cw) = VideoGeometry();
+        if (v.IsEmpty) return;
+        double cx = v.X + (v.Width - cw) * _shortsX;
+        Place(ShortsDimL, v.X, v.Y, cx - v.X, v.Height);
+        Place(ShortsDimR, cx + cw, v.Y, v.Right - cx - cw, v.Height);
+        Place(ShortsFrame, cx, v.Y, cw, v.Height);
+    }
+
+    private static void Place(FrameworkElement el, double x, double y, double w, double h)
+    {
+        Canvas.SetLeft(el, x);
+        Canvas.SetTop(el, y);
+        el.Width = Math.Max(0, w);
+        el.Height = Math.Max(0, h);
+    }
+
+    private void OnShortsDown(object sender, MouseButtonEventArgs e)
+    {
+        var (v, cw) = VideoGeometry();
+        if (v.IsEmpty) return;
+        double x = e.GetPosition(ShortsLayer).X;
+        double cx = v.X + (v.Width - cw) * _shortsX;
+        _shortsGrab = x >= cx && x <= cx + cw ? x - cx : cw / 2;
+        ShortsLayer.CaptureMouse();
+        MoveShorts(x);
+        e.Handled = true;
+    }
+
+    private void OnShortsMove(object sender, MouseEventArgs e)
+    {
+        if (_shortsGrab >= 0) MoveShorts(e.GetPosition(ShortsLayer).X);
+    }
+
+    private void OnShortsUp(object sender, MouseButtonEventArgs e)
+    {
+        _shortsGrab = -1;
+        ShortsLayer.ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    private void MoveShorts(double x)
+    {
+        var (v, cw) = VideoGeometry();
+        double free = v.Width - cw;
+        _shortsX = free > 0 ? Math.Clamp((x - _shortsGrab - v.X) / free, 0, 1) : 0.5;
+        LayoutShorts();
+    }
+
+    // ---------- export ----------
+
+    private string CleanName()
+    {
+        var name = NameBox.Text.Trim();
+        foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+        return string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(_entry.Path) : name;
+    }
+
+    private static string Unique(string path)
+    {
+        if (!File.Exists(path)) return path;
+        string dir = Path.GetDirectoryName(path)!, name = Path.GetFileNameWithoutExtension(path), ext = Path.GetExtension(path);
+        for (int i = 2; ; i++)
+        {
+            var p = Path.Combine(dir, $"{name} ({i}){ext}");
+            if (!File.Exists(p)) return p;
+        }
+    }
+
+    private ExportRequest BuildRequest(string output) => new(
+        _entry.Path, output, Timeline.From, Timeline.To,
+        ShortsCheck.IsChecked == true, _shortsX,
+        _tracks.Select(t => new AudioTrackEdit(t.Info.Index, t.Title, t.Include.IsChecked == true, t.Volume.Value, t.Range.From, t.Range.To)).ToList(),
+        MergeCheck.IsChecked == true, Loc.T("E.MergedTitle"));
+
+    private async Task<string?> ExportToTempAsync(string name)
+    {
+        var dir = Path.GetDirectoryName(_entry.Path)!;
+        var temp = Path.Combine(dir, name + MediaLibrary.TempMarker + ".mp4");
+        Pause();
+        SetBusy(true);
+        _exportCts = new CancellationTokenSource();
+        Progress.Value = 0;
+        Progress.Visibility = CancelBtn.Visibility = Visibility.Visible;
+        StatusText.Text = Loc.T("E.Exporting");
+        try
+        {
+            var progress = new Progress<double>(p => { Progress.Value = p; StatusText.Text = Loc.F("E.ExportingPct", (int)(p * 100)); });
+            await ClipExporter.ExportAsync(BuildRequest(temp), progress, _exportCts.Token);
+            return temp;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = Loc.T("E.Cancelled");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Export failed", ex);
+            StatusText.Text = Loc.F("E.ExportFailed", ex.Message);
+            return null;
+        }
+        finally
+        {
+            Progress.Visibility = CancelBtn.Visibility = Visibility.Collapsed;
+            SetBusy(false);
+        }
+    }
+
+    private void SetBusy(bool busy)
+    {
+        _busy = busy;
+        EditPanel.IsEnabled = !busy;
+        Timeline.IsEnabled = !busy;
+        DeleteBtn.IsEnabled = SaveCopyBtn.IsEnabled = ReplaceBtn.IsEnabled = !busy;
+    }
+
+    private void OnCancelExport(object sender, RoutedEventArgs e) => _exportCts?.Cancel();
+
+    private async void OnSaveCopy(object sender, RoutedEventArgs e)
+    {
+        var name = CleanName();
+        if (string.Equals(name, Path.GetFileNameWithoutExtension(_entry.Path), StringComparison.OrdinalIgnoreCase)) name += "_cut";
+        var temp = await ExportToTempAsync(name);
+        if (temp == null) return;
+        try
+        {
+            var target = Unique(Path.Combine(Path.GetDirectoryName(_entry.Path)!, name + ".mp4"));
+            File.Move(temp, target);
+            FilesChanged = true;
+            StatusText.Text = Loc.F("E.Saved", Path.GetFileName(target));
+            Log.Info($"Gallery: saved cut {target}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Save copy failed", ex);
+            StatusText.Text = Loc.F("E.ExportFailed", ex.Message);
+            TryDelete(temp);
+        }
+    }
+
+    private async void OnReplace(object sender, RoutedEventArgs e)
+    {
+        var name = CleanName();
+        var temp = await ExportToTempAsync(name);
+        if (temp == null) return;
+        try
+        {
+            var created = File.GetCreationTime(_entry.Path);
+            var modified = File.GetLastWriteTime(_entry.Path);
+            ClosePlayer();
+            RecycleWithRetry(_entry.Path); // the original goes to the Recycle Bin, not gone for good
+            var target = Path.Combine(Path.GetDirectoryName(_entry.Path)!, name + ".mp4");
+            if (File.Exists(target)) target = Unique(target);
+            File.Move(temp, target);
+            File.SetCreationTime(target, created);
+            File.SetLastWriteTime(target, modified);
+            FilesChanged = true;
+            Log.Info($"Gallery: replaced {_entry.Path} -> {target}");
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Replace failed", ex);
+            StatusText.Text = Loc.F("E.ExportFailed", ex.Message);
+            if (File.Exists(_entry.Path)) TryDelete(temp);
+            else StatusText.Text = Loc.F("E.KeptTemp", Path.GetFileName(temp));
+        }
+    }
+
+    private void OnDelete(object sender, RoutedEventArgs e)
+    {
+        var r = MessageBox.Show(this, Loc.F("G.DeleteConfirm", Path.GetFileName(_entry.Path)), Loc.T("G.Delete"),
+            MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (r != MessageBoxResult.Yes) return;
+        try
+        {
+            ClosePlayer();
+            RecycleWithRetry(_entry.Path);
+            FilesChanged = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Delete failed", ex);
+            StatusText.Text = ex.Message;
+        }
+    }
+
+    private void ClosePlayer()
+    {
+        _playing = false;
+        _opened = false;
+        try
+        {
+            Player.Stop();
+            Player.Close();
+            Player.Source = null;
+        }
+        catch { }
+    }
+
+    private static void RecycleWithRetry(string path)
+    {
+        for (int i = 0; ; i++)
+        {
+            try { FileActions.Recycle(path); return; }
+            catch (IOException) when (i < 10) { Thread.Sleep(150); }
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch { }
+    }
+}

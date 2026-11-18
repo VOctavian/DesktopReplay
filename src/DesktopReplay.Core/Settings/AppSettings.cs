@@ -81,6 +81,10 @@ public sealed class AppSettings
     public AudioSettings Audio { get; set; } = new();
     public HotkeySettings Hotkeys { get; set; } = new();
 
+    // Gallery
+    public int GalleryTileWidth { get; set; } = 300;
+    public string GallerySort { get; set; } = "Newest";
+
     // Notifications
     public bool NotifySound { get; set; } = true;
     public bool NotifyPopup { get; set; } = true;
