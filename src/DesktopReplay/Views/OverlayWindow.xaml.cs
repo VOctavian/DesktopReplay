@@ -320,6 +320,17 @@ public partial class OverlayWindow : Window
 
     private void OnBrowseOutput(object sender, RoutedEventArgs e) => Browse(p => _draft.OutputFolder = p, _draft.OutputFolder);
     private void OnBrowseBuffer(object sender, RoutedEventArgs e) => Browse(p => _draft.BufferFolder = p, _draft.BufferFolder);
+    private void OnBrowseRecordings(object sender, RoutedEventArgs e) => Browse(p => _draft.RecordingsFolder = p, _draft.EffectiveRecordingsFolder);
+    private void OnBrowseScreenshots(object sender, RoutedEventArgs e) => Browse(p => _draft.ScreenshotsFolder = p, _draft.EffectiveScreenshotsFolder);
+    private void OnResetRecordings(object sender, RoutedEventArgs e) { _draft.RecordingsFolder = ""; Rebind(); }
+    private void OnResetScreenshots(object sender, RoutedEventArgs e) { _draft.ScreenshotsFolder = ""; Rebind(); }
+
+    private void Rebind()
+    {
+        DataContext = null;
+        DataContext = _draft;
+        OnDraftChanged(this, new RoutedEventArgs());
+    }
 
     private void Browse(Action<string> set, string current)
     {

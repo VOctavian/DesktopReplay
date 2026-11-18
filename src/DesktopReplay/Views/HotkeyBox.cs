@@ -1,19 +1,23 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using DesktopReplay.Core.Settings;
 
 namespace DesktopReplay.Views;
 
 /// <summary>
-/// Read-only text box that records a key combination when focused.
+/// Focusable field that records a key combination. Click it, then press the keys.
 /// SingleKey mode (push-to-talk) accepts one key or a mouse button without modifiers.
 /// </summary>
-public sealed class HotkeyBox : TextBox
+public sealed class HotkeyBox : ContentControl
 {
     public static readonly DependencyProperty HotkeyProperty = DependencyProperty.Register(
         nameof(Hotkey), typeof(string), typeof(HotkeyBox),
         new FrameworkPropertyMetadata("", FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, (d, _) => ((HotkeyBox)d).Refresh()));
+
+    public static readonly DependencyProperty IsEditingProperty = DependencyProperty.Register(
+        nameof(IsEditing), typeof(bool), typeof(HotkeyBox), new PropertyMetadata(false));
 
     public string Hotkey
     {
@@ -21,46 +25,61 @@ public sealed class HotkeyBox : TextBox
         set => SetValue(HotkeyProperty, value);
     }
 
+    /// <summary>True while waiting for keys (used by the template to highlight the field).</summary>
+    public bool IsEditing
+    {
+        get => (bool)GetValue(IsEditingProperty);
+        private set => SetValue(IsEditingProperty, value);
+    }
+
     public bool SingleKey { get; set; }
 
     /// <summary>Raised when editing starts/ends so global hotkeys can be suspended.</summary>
     public static event Action<bool>? EditingChanged;
 
-    private bool _editing;
-
     public HotkeyBox()
     {
-        SetResourceReference(StyleProperty, typeof(TextBox)); // use the dark TextBox theme
-        IsReadOnly = true;
-        IsReadOnlyCaretVisible = false;
+        Focusable = true;
         Cursor = Cursors.Hand;
         MinWidth = 180;
+        FocusVisualStyle = null;
         Loaded += (_, _) => Refresh();
+    }
+
+    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseLeftButtonDown(e);
+        if (!IsKeyboardFocused) Focus();
+        e.Handled = true;
     }
 
     protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnGotKeyboardFocus(e);
-        _editing = true;
+        IsEditing = true;
         EditingChanged?.Invoke(true);
-        Text = Loc.T("H.PressKeys");
+        Content = Loc.T("H.PressKeys");
     }
 
     protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnLostKeyboardFocus(e);
-        _editing = false;
-        EditingChanged?.Invoke(false);
+        if (IsEditing)
+        {
+            IsEditing = false;
+            EditingChanged?.Invoke(false);
+        }
         Refresh();
     }
 
     private void Refresh()
     {
-        if (!_editing) Text = string.IsNullOrEmpty(Hotkey) ? "—" : Hotkey;
+        if (!IsEditing) Content = string.IsNullOrEmpty(Hotkey) ? "—" : Hotkey;
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if (!IsEditing) { base.OnPreviewKeyDown(e); return; }
         e.Handled = true;
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.Escape) { Finish(); return; }
@@ -76,7 +95,7 @@ public sealed class HotkeyBox : TextBox
         }
         if (KeyNames.IsModifierVk(vk) || key is Key.LWin or Key.RWin)
         {
-            Text = Describe(Keyboard.Modifiers) + "…";
+            Content = Describe(Keyboard.Modifiers) + " + …";
             return;
         }
         var mods = HotkeyModifiers.None;
@@ -93,7 +112,7 @@ public sealed class HotkeyBox : TextBox
 
     protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
     {
-        if (_editing && SingleKey && e.ChangedButton is MouseButton.XButton1 or MouseButton.XButton2 or MouseButton.Middle)
+        if (IsEditing && SingleKey && e.ChangedButton is MouseButton.XButton1 or MouseButton.XButton2 or MouseButton.Middle)
         {
             int vk = e.ChangedButton switch { MouseButton.XButton1 => 0x05, MouseButton.XButton2 => 0x06, _ => 0x04 };
             Hotkey = new Hotkey(HotkeyModifiers.None, vk).ToString();
@@ -116,11 +135,12 @@ public sealed class HotkeyBox : TextBox
 
     private void Finish()
     {
-        _editing = false;
+        IsEditing = false;
+        EditingChanged?.Invoke(false);
         Refresh();
-        Keyboard.ClearFocus();
+        // Move focus back to the window so the field stops listening.
         var scope = FocusManager.GetFocusScope(this);
         FocusManager.SetFocusedElement(scope, null);
-        EditingChanged?.Invoke(false);
+        Keyboard.Focus(Window.GetWindow(this));
     }
 }

@@ -17,6 +17,8 @@ public static class SelfTest
             Directory.CreateDirectory(outputDir);
             var s = SettingsStore.Load().Clone();
             s.OutputFolder = outputDir;
+            s.RecordingsFolder = Path.Combine(outputDir, "recordings");
+            s.ScreenshotsFolder = Path.Combine(outputDir, "screenshots");
             s.BufferFolder = Path.Combine(outputDir, "buffer");
             s.ReplaySeconds = 6;
             s.ReplayEnabled = true;

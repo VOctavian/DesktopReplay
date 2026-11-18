@@ -164,11 +164,16 @@ public sealed class Loc : INotifyPropertyChanged
         ["S.AudioBitrateHint"] = ("192 кбит/с — прозрачное качество. 128 — экономнее, 320 — для монтажа.", "192 kbps is transparent. 128 saves space, 320 for editing."),
 
         // Storage
-        ["S.Output"] = ("Папка записей", "Recordings folder"),
+        ["S.Output"] = ("Папка повторов", "Replays folder"),
+        ["S.RecordingsFolder"] = ("Папка записей (старт/стоп)", "Recordings folder (start/stop)"),
+        ["S.ScreenshotsFolder"] = ("Папка скриншотов", "Screenshots folder"),
+        ["S.SameAsReplays"] = ("Пусто — та же, что для повторов", "Empty = same as replays"),
+        ["S.Reset"] = ("Сбросить", "Reset"),
         ["S.Subfolders"] = ("Подпапки по играм", "Subfolders per game"),
+        ["S.MaxSizeAll"] = ("Лимит считается по всем трём папкам вместе.", "The limit counts all three folders together."),
         ["S.Buffer"] = ("Папка буфера повтора", "Replay buffer folder"),
         ["S.BufferHint"] = ("Лучше SSD. Буфер постоянно перезаписывается; при выходе из программы удаляется.", "SSD recommended. Constantly rewritten; deleted on exit."),
-        ["S.MaxSize"] = ("Лимит папки записей, ГБ (0 — без лимита)", "Recordings folder limit, GB (0 = none)"),
+        ["S.MaxSize"] = ("Лимит места, ГБ (0 — без лимита)", "Space limit, GB (0 = none)"),
         ["S.WarnAt"] = ("Предупреждать при заполнении, %", "Warn when full, %"),
         ["S.MaxSizeHint"] = ("Файлы не удаляются автоматически. После каждого сохранения и раз в минуту во время записи вы увидите, сколько места осталось.", "Nothing is deleted automatically. After each save and every minute while recording you'll see how much space is left."),
         ["S.KeepMkv"] = ("Сохранять исходный MKV после перепаковки в MP4", "Keep the source MKV after remuxing to MP4"),

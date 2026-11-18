@@ -255,7 +255,7 @@ public sealed class ReplayEngine : IDisposable
             foreach (var v in session.Video)
             {
                 if (!starts.TryGetValue(v.Stream!.Index, out long start)) continue;
-                var final = FileNaming.Build(_settings, appName, time, ".mp4", multi ? v.Monitor.Number : null);
+                var final = FileNaming.Build(_settings, _settings.OutputFolder, appName, time, ".mp4", multi ? v.Monitor.Number : null);
                 var mux = new FileMuxer(final + ".part", "mp4", v.Stream, audio, start, fastStart: true);
                 outputs.Add((mux, start, final));
             }
@@ -312,7 +312,7 @@ public sealed class ReplayEngine : IDisposable
         {
             foreach (var v in session.Video)
             {
-                var path = FileNaming.Build(_settings, name, time, ".mkv", multi ? v.Monitor.Number : null);
+                var path = FileNaming.Build(_settings, _settings.EffectiveRecordingsFolder, name, time, ".mkv", multi ? v.Monitor.Number : null);
                 var mux = new FileMuxer(path, "matroska", v.Stream!, session.Audio!.Streams, -1, fastStart: false);
                 muxers.Add(mux);
                 byStream[v.Stream!.Index] = mux;
@@ -436,7 +436,7 @@ public sealed class ReplayEngine : IDisposable
         bool multi = shots.Count > 1;
         var paths = await Task.Run(() => shots.Select(s =>
         {
-            var path = FileNaming.Build(_settings, name, time, fmt == ScreenshotFormat.Jpg ? ".jpg" : ".png", multi ? s.MonitorNumber : null);
+            var path = FileNaming.Build(_settings, _settings.EffectiveScreenshotsFolder, name, time, fmt == ScreenshotFormat.Jpg ? ".jpg" : ".png", multi ? s.MonitorNumber : null);
             WriteImage(s, path, fmt);
             return path;
         }).ToList());

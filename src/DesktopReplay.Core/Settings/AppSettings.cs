@@ -47,7 +47,15 @@ public sealed class AppSettings
     public int ReplaySeconds { get; set; } = 120;
 
     // Storage
+    /// <summary>Folder for instant replays.</summary>
     public string OutputFolder { get; set; } = AppPaths.DefaultOutput;
+    /// <summary>Folder for manual recordings; empty = same as replays.</summary>
+    public string RecordingsFolder { get; set; } = "";
+    /// <summary>Folder for screenshots; empty = same as replays.</summary>
+    public string ScreenshotsFolder { get; set; } = "";
+
+    [JsonIgnore] public string EffectiveRecordingsFolder => string.IsNullOrWhiteSpace(RecordingsFolder) ? OutputFolder : RecordingsFolder;
+    [JsonIgnore] public string EffectiveScreenshotsFolder => string.IsNullOrWhiteSpace(ScreenshotsFolder) ? OutputFolder : ScreenshotsFolder;
     public string BufferFolder { get; set; } = AppPaths.DefaultBuffer;
     public bool SubfolderPerGame { get; set; } = true;
     public double MaxFolderSizeGb { get; set; } = 100;

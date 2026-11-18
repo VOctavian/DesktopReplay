@@ -5,11 +5,11 @@ namespace DesktopReplay.Core.Engine;
 
 public static class FileNaming
 {
-    /// <summary>Builds "Output\Game\Game_2026-11-18_21-30-05[_mon2].ext", unique on disk.</summary>
-    public static string Build(AppSettings s, string appName, DateTime time, string ext, int? monitorNumber)
+    /// <summary>Builds "Folder\Game\Game_2026-11-18_21-30-05[_mon2].ext", unique on disk.</summary>
+    public static string Build(AppSettings s, string baseFolder, string appName, DateTime time, string ext, int? monitorNumber)
     {
         var name = Sanitize(appName);
-        var folder = s.OutputFolder;
+        var folder = baseFolder;
         if (s.SubfolderPerGame) folder = Path.Combine(folder, name);
         Directory.CreateDirectory(folder);
         var baseName = $"{name}_{time:yyyy-MM-dd_HH-mm-ss}" + (monitorNumber.HasValue ? $"_mon{monitorNumber}" : "");
@@ -45,14 +45,24 @@ public static class Storage
 {
     public static StorageUsage GetUsage(AppSettings s)
     {
+        // Replays, recordings and screenshots may live in different folders; count each tree once.
+        var folders = new[] { s.OutputFolder, s.EffectiveRecordingsFolder, s.EffectiveScreenshotsFolder }
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .Select(f => { try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(f)); } catch { return f; } })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        folders = folders.Where(f => !folders.Any(o => o != f && f.StartsWith(o + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))).ToList();
         long used = 0;
-        try
+        foreach (var folder in folders)
         {
-            if (Directory.Exists(s.OutputFolder))
-                foreach (var f in new DirectoryInfo(s.OutputFolder).EnumerateFiles("*", SearchOption.AllDirectories))
-                    used += f.Length;
+            try
+            {
+                if (Directory.Exists(folder))
+                    foreach (var f in new DirectoryInfo(folder).EnumerateFiles("*", SearchOption.AllDirectories))
+                        used += f.Length;
+            }
+            catch { }
         }
-        catch { }
         long free = 0;
         try { free = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(s.OutputFolder))!).AvailableFreeSpace; } catch { }
         return new StorageUsage(used, (long)(s.MaxFolderSizeGb * 1024 * 1024 * 1024), free);

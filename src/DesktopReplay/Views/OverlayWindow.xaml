@@ -307,7 +307,24 @@
                                 <TextBox Width="460" Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" />
                                 <Button Margin="8,0,0,0" Content="{l:T Browse}" Click="OnBrowseOutput" />
                             </StackPanel>
-                            <CheckBox Content="{l:T S.Subfolders}" IsChecked="{Binding SubfolderPerGame}" />
+
+                            <TextBlock Style="{StaticResource Label}" Text="{l:T S.RecordingsFolder}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBox Width="460" Text="{Binding RecordingsFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Margin="8,0,0,0" Content="{l:T Browse}" Click="OnBrowseRecordings" />
+                                <Button Margin="8,0,0,0" Content="{l:T S.Reset}" Click="OnResetRecordings" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:T S.SameAsReplays}" />
+
+                            <TextBlock Style="{StaticResource Label}" Text="{l:T S.ScreenshotsFolder}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBox Width="460" Text="{Binding ScreenshotsFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Margin="8,0,0,0" Content="{l:T Browse}" Click="OnBrowseScreenshots" />
+                                <Button Margin="8,0,0,0" Content="{l:T S.Reset}" Click="OnResetScreenshots" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:T S.SameAsReplays}" />
+
+                            <CheckBox Margin="0,18,0,0" Content="{l:T S.Subfolders}" IsChecked="{Binding SubfolderPerGame}" />
                             <TextBlock x:Name="UsageText" Style="{StaticResource Hint}" />
 
                             <TextBlock Style="{StaticResource Label}" Text="{l:T S.MaxSize}" />
@@ -315,6 +332,7 @@
                             <TextBlock Style="{StaticResource Label}" Text="{l:T S.WarnAt}" />
                             <TextBox Width="120" HorizontalAlignment="Left" Text="{Binding WarnAtPercent, UpdateSourceTrigger=PropertyChanged}" />
                             <TextBlock Style="{StaticResource Hint}" Text="{l:T S.MaxSizeHint}" MaxWidth="560" HorizontalAlignment="Left" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:T S.MaxSizeAll}" MaxWidth="560" HorizontalAlignment="Left" />
 
                             <TextBlock Style="{StaticResource Label}" Text="{l:T S.Buffer}" />
                             <StackPanel Orientation="Horizontal">
