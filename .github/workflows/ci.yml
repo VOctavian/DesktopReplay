@@ -1,0 +1,30 @@
+name: CI
+
+# Builds the app and runs the engine checks (--ci-test) on every push and pull request.
+# The runner has no GPU, so encoding falls back to libx264; screen capture is not tested here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build src/DesktopReplay/DesktopReplay.csproj -c Release
+      - name: Engine tests
+        shell: pwsh
+        run: ./tools/ci-test.ps1 -Exe src/DesktopReplay/bin/Release/net10.0-windows10.0.22621.0/win-x64/DesktopReplay.exe
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-test
+          path: |
+            ci-out/ci-report.txt
+            ~/AppData/Local/DesktopReplay/logs/*.log

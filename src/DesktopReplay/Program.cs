@@ -26,7 +26,12 @@ public static class Program
         if (ex >= 0 && ex + 4 < args.Length) return SelfTest.ExportTest(args[ex + 1], args[ex + 2],
             double.Parse(args[ex + 3], System.Globalization.CultureInfo.InvariantCulture),
             double.Parse(args[ex + 4], System.Globalization.CultureInfo.InvariantCulture),
-            args.Contains("shorts"), args.Contains("merge"));
+            args.Contains("shorts"), args.Contains("merge"),
+            args.Contains("discord") ? DesktopReplay.Core.Library.ExportPreset.Discord : args.Contains("gif") ? DesktopReplay.Core.Library.ExportPreset.Gif : DesktopReplay.Core.Library.ExportPreset.Original);
+
+        // --ci-test dir: engine checks on a synthetic video (no GPU needed); report in dir\ci-report.txt
+        int ci = Array.IndexOf(args, "--ci-test");
+        if (ci >= 0 && ci + 1 < args.Length) return CiTest.Run(args[ci + 1]);
 
         // --gallery-only [folder]: just the gallery window (no engine, settings are not saved) for UI testing
         int go = Array.IndexOf(args, "--gallery-only");
@@ -34,11 +39,20 @@ public static class Program
         {
             Services.WindowHelper.AllowCapture = true;
             var settings = DesktopReplay.Core.Settings.SettingsStore.Load();
-            if (go + 1 < args.Length && Directory.Exists(args[go + 1])) { settings.OutputFolder = args[go + 1]; settings.RecordingsFolder = ""; }
+            if (go + 1 < args.Length && Directory.Exists(args[go + 1])) { settings.OutputFolder = args[go + 1]; settings.RecordingsFolder = ""; settings.ScreenshotsFolder = ""; }
             Loc.I.SetLanguage(settings.Language);
             var wpf = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
             wpf.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/DesktopReplay;component/Themes/Theme.xaml") });
-            return wpf.Run(new Views.GalleryWindow(() => settings, () => { }));
+            var gallery = new Views.GalleryWindow(() => settings, () => { });
+            int tt = Array.IndexOf(args, "--toast-test"); // shows the "replay saved" toast for a file, for UI checks
+            if (tt >= 0 && tt + 1 < args.Length)
+                gallery.Loaded += (_, _) => Views.ToastWindow.Show(Loc.T("N.ReplaySaved"), Path.GetFileName(args[tt + 1]), Views.ToastKind.Ok, 30, new[]
+                {
+                    new Views.ToastAction(Loc.T("Open"), "", () => App.OpenPath(args[tt + 1])),
+                    new Views.ToastAction(Loc.T("G.Cut"), "", () => new Views.ClipEditorWindow(DesktopReplay.Core.Library.MediaLibrary.EntryFor(args[tt + 1]), true).Show()),
+                    new Views.ToastAction(Loc.T("N.Folder"), "", () => Views.FileActions.ShowInFolder(args[tt + 1])),
+                });
+            return wpf.Run(gallery);
         }
 
         int st = Array.IndexOf(args, "--selftest");

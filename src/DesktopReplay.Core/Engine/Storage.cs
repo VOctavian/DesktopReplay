@@ -69,6 +69,27 @@ public static class Storage
     }
 
     /// <summary>Approximate bitrate for given settings (video + 5 audio tracks), bits per second.</summary>
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetDiskFreeSpaceEx(string dir, out ulong freeForUser, out ulong total, out ulong totalFree);
+
+    /// <summary>Free space available to us on the volume holding <paramref name="path"/> (also UNC); -1 if unknown.</summary>
+    public static long FreeBytes(string path)
+    {
+        try
+        {
+            var dir = Path.GetFullPath(path);
+            while (!Directory.Exists(dir))
+            {
+                var parent = Path.GetDirectoryName(dir);
+                if (string.IsNullOrEmpty(parent) || parent == dir) break;
+                dir = parent;
+            }
+            if (!dir.EndsWith('\\')) dir += '\\';
+            return GetDiskFreeSpaceEx(dir, out var free, out _, out _) ? (long)Math.Min(free, long.MaxValue) : -1;
+        }
+        catch { return -1; }
+    }
+
     public static long VideoBitrate(AppSettings s, int width, int height)
     {
         if (s.Quality == QualityPreset.Custom) return Math.Clamp(s.CustomBitrateMbps, 1, 300) * 1_000_000L;

@@ -19,6 +19,7 @@ public sealed class LibraryEntry
     public double Duration { get; set; }
     public int Width { get; set; }
     public int Height { get; set; }
+    public bool IsImage => MediaLibrary.IsImage(Path);
 }
 
 /// <summary>Finds every video file in the output folders (including files added from outside) and caches their metadata and thumbnails.</summary>
@@ -38,6 +39,10 @@ public static partial class MediaLibrary
     [GeneratedRegex(@"^(?<game>.+?)_(?<d>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})")]
     private static partial Regex NameRegex();
 
+    public static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
+
+    public static bool IsImage(string path) => ImageExtensions.Contains(System.IO.Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
     public static bool IsVideo(string path) =>
         Extensions.Contains(System.IO.Path.GetExtension(path), StringComparer.OrdinalIgnoreCase) &&
         !path.Contains(TempMarker, StringComparison.OrdinalIgnoreCase);
@@ -51,7 +56,8 @@ public static partial class MediaLibrary
         return list.Where(f => !list.Any(o => o != f && f.StartsWith(o, StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
-    public static List<LibraryEntry> Scan(IEnumerable<string> folders, CancellationToken ct = default)
+    /// <summary>Lists videos, or with <paramref name="images"/> screenshots/pictures, under the folders.</summary>
+    public static List<LibraryEntry> Scan(IEnumerable<string> folders, CancellationToken ct = default, bool images = false)
     {
         LoadCache();
         var result = new List<LibraryEntry>();
@@ -65,7 +71,7 @@ public static partial class MediaLibrary
             foreach (var file in files)
             {
                 ct.ThrowIfCancellationRequested();
-                if (!IsVideo(file)) continue;
+                if (images ? !IsImage(file) : !IsVideo(file)) continue;
                 try
                 {
                     var fi = new FileInfo(file);
@@ -82,8 +88,15 @@ public static partial class MediaLibrary
                     }
                     try
                     {
-                        var info = MediaProbe.Probe(file, full: false);
-                        e.Duration = info.Duration; e.Width = info.Width; e.Height = info.Height;
+                        if (images)
+                        {
+                            (e.Width, e.Height) = ImageSize(file);
+                        }
+                        else
+                        {
+                            var info = MediaProbe.Probe(file, full: false);
+                            e.Duration = info.Duration; e.Width = info.Width; e.Height = info.Height;
+                        }
                     }
                     catch (Exception ex) { Log.Warn($"Gallery: cannot probe {file}: {ex.Message}"); }
                     lock (CacheLock) _cache![file] = new CacheItem(fi.Length, fi.LastWriteTimeUtc.Ticks, e.Duration, e.Width, e.Height);
@@ -96,6 +109,20 @@ public static partial class MediaLibrary
         }
         if (dirty) SaveCache();
         return result;
+    }
+
+    /// <summary>Entry for a single file (e.g. a replay just saved), probed on the spot.</summary>
+    public static LibraryEntry EntryFor(string path)
+    {
+        var fi = new FileInfo(path);
+        var e = MakeEntry(fi.DirectoryName! + "\\", fi);
+        try
+        {
+            var info = MediaProbe.Probe(path, full: false);
+            e.Duration = info.Duration; e.Width = info.Width; e.Height = info.Height;
+        }
+        catch { }
+        return e;
     }
 
     private static LibraryEntry MakeEntry(string root, FileInfo fi)
@@ -113,6 +140,15 @@ public static partial class MediaLibrary
         };
     }
 
+    /// <summary>Pixel size from the image header (no full decode).</summary>
+    public static (int W, int H) ImageSize(string file)
+    {
+        using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var dec = BitmapDecoder.Create(fs, BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.None);
+        var f = dec.Frames[0];
+        return (f.PixelWidth, f.PixelHeight);
+    }
+
     // ---------- thumbnails ----------
 
     public static async Task<BitmapSource?> GetThumbnailAsync(LibraryEntry e, int width = 400, CancellationToken ct = default)
@@ -126,9 +162,25 @@ public static partial class MediaLibrary
             return await Task.Run(() =>
             {
                 if (File.Exists(file)) return LoadImage(file);
-                using var g = new FrameGrabber(e.Path);
-                var dur = g.Duration > 0 ? g.Duration : e.Duration;
-                var bmp = g.Grab(dur > 2 ? dur * 0.4 : 0, width) ?? g.Grab(0, width);
+                BitmapSource? bmp;
+                if (e.IsImage)
+                {
+                    var b = new BitmapImage();
+                    b.BeginInit();
+                    b.CacheOption = BitmapCacheOption.OnLoad;
+                    b.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+                    b.DecodePixelWidth = width;
+                    b.UriSource = new Uri(e.Path);
+                    b.EndInit();
+                    b.Freeze();
+                    bmp = b;
+                }
+                else
+                {
+                    using var g = new FrameGrabber(e.Path);
+                    var dur = g.Duration > 0 ? g.Duration : e.Duration;
+                    bmp = g.Grab(dur > 2 ? dur * 0.4 : 0, width) ?? g.Grab(0, width);
+                }
                 if (bmp == null) return null;
                 Directory.CreateDirectory(ThumbDir);
                 var enc = new JpegBitmapEncoder { QualityLevel = 85 };

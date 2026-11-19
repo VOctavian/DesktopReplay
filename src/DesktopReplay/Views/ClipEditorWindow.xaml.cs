@@ -46,6 +46,8 @@ public partial class ClipEditorWindow : Window
         InitializeComponent();
         Title = entry.Name;
         NameBox.Text = Path.GetFileNameWithoutExtension(entry.Path);
+        PresetCombo.ItemsSource = new[] { Loc.T("E.PresetOriginal"), Loc.T("E.PresetDiscord"), Loc.T("E.PresetGif") };
+        PresetCombo.SelectedIndex = 0;
         VolumeSlider.Value = 0.8;
 
         _tick = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
@@ -100,12 +102,22 @@ public partial class ClipEditorWindow : Window
         Player.Pause(); // opens the media and shows the first frame
         _tick.Start();
 
+        var waves = _tracks.Count > 0 ? Task.Run(() => Waveform.Compute(_entry.Path, 1500)) : null;
         try
         {
             var strip = await Task.Run(() => MediaLibrary.Filmstrip(_entry.Path, 14, 180));
             Timeline.Strip = strip.Cast<ImageSource?>().ToList();
         }
         catch (Exception ex) { Log.Warn($"Filmstrip failed: {ex.Message}"); }
+        if (waves != null)
+        {
+            try
+            {
+                var w = await waves;
+                foreach (var t in _tracks) if (w.TryGetValue(t.Info.Index, out var peaks)) t.Range.Wave = peaks;
+            }
+            catch (Exception ex) { Log.Warn($"Waveform failed: {ex.Message}"); }
+        }
     }
 
     // ---------- audio tracks ----------
@@ -388,7 +400,21 @@ public partial class ClipEditorWindow : Window
         double len = Timeline.To - Timeline.From;
         SelectionText.Text = $"{RangeTimeline.FormatTime(Timeline.From)} – {RangeTimeline.FormatTime(Timeline.To)}  ·  {RangeTimeline.FormatTime(len)}";
         long est = _duration > 0 ? (long)(_entry.Size * len / _duration) : 0;
-        SizeText.Text = "≈ " + WindowHelper.FormatBytes(est);
+        SizeText.Text = Preset switch
+        {
+            ExportPreset.Discord => "≤ " + WindowHelper.FormatBytes(ClipExporter.DiscordLimit),
+            // ~100 KB per second at 480 px / 15 fps; strongly depends on the scene
+            ExportPreset.Gif => "≈ " + WindowHelper.FormatBytes((long)(len * (ShortsCheck.IsChecked == true ? 140_000 : 100_000))),
+            _ => "≈ " + WindowHelper.FormatBytes(est),
+        };
+        PresetHint.Text = Preset switch
+        {
+            ExportPreset.Discord when len > 150 => Loc.T("E.DiscordLong"),
+            ExportPreset.Discord => Loc.T("E.DiscordHint"),
+            ExportPreset.Gif when len > 30 => Loc.T("E.GifLong"),
+            ExportPreset.Gif => Loc.T("E.GifHint"),
+            _ => "",
+        };
         if (!LengthBox.IsKeyboardFocused) LengthBox.Text = len.ToString("0.#", CultureInfo.CurrentCulture);
     }
 
@@ -540,16 +566,33 @@ public partial class ClipEditorWindow : Window
         }
     }
 
+    private ExportPreset Preset => (ExportPreset)Math.Max(0, PresetCombo.SelectedIndex);
+
+    private void OnPresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded && PresetCombo.SelectedIndex < 0) return;
+        bool gif = Preset == ExportPreset.Gif;
+        ExtText.Text = gif ? ".gif" : ".mp4";
+        // replacing the original only makes sense for a same-quality cut
+        ReplaceBtn.IsEnabled = !_busy && Preset == ExportPreset.Original;
+        TracksPanel.Opacity = MergeCheck.Opacity = gif ? 0.4 : 1;
+        TracksPanel.IsEnabled = MergeCheck.IsEnabled = !gif;
+        if (!gif) UpdateMergeState();
+        if (_duration > 0) UpdateSelectionInfo();
+    }
+
     private ExportRequest BuildRequest(string output) => new(
         _entry.Path, output, Timeline.From, Timeline.To,
         ShortsCheck.IsChecked == true, _shortsX,
         _tracks.Select(t => new AudioTrackEdit(t.Info.Index, t.Title, t.Include.IsChecked == true, t.Volume.Value, t.Range.From, t.Range.To)).ToList(),
-        MergeCheck.IsChecked == true, Loc.T("E.MergedTitle"));
+        MergeCheck.IsChecked == true, Loc.T("E.MergedTitle"), Preset, ClipExporter.DiscordLimit);
+
+    private string OutputExt => Preset == ExportPreset.Gif ? ".gif" : ".mp4";
 
     private async Task<string?> ExportToTempAsync(string name)
     {
         var dir = Path.GetDirectoryName(_entry.Path)!;
-        var temp = Path.Combine(dir, name + MediaLibrary.TempMarker + ".mp4");
+        var temp = Path.Combine(dir, name + MediaLibrary.TempMarker + OutputExt);
         Pause();
         SetBusy(true);
         _exportCts = new CancellationTokenSource();
@@ -585,23 +628,34 @@ public partial class ClipEditorWindow : Window
         _busy = busy;
         EditPanel.IsEnabled = !busy;
         Timeline.IsEnabled = !busy;
-        DeleteBtn.IsEnabled = SaveCopyBtn.IsEnabled = ReplaceBtn.IsEnabled = !busy;
+        DeleteBtn.IsEnabled = SaveCopyBtn.IsEnabled = !busy;
+        ReplaceBtn.IsEnabled = !busy && Preset == ExportPreset.Original;
     }
 
     private void OnCancelExport(object sender, RoutedEventArgs e) => _exportCts?.Cancel();
 
+    private string? _lastSaved;
+    private void OnCopyResult(object sender, RoutedEventArgs e)
+    {
+        if (_lastSaved != null && FileActions.CopyToClipboard(new[] { _lastSaved })) StatusText.Text = Loc.F("G.Copied", 1);
+    }
+    private void OnFolderResult(object sender, RoutedEventArgs e) { if (_lastSaved != null) FileActions.ShowInFolder(_lastSaved); }
+
     private async void OnSaveCopy(object sender, RoutedEventArgs e)
     {
         var name = CleanName();
-        if (string.Equals(name, Path.GetFileNameWithoutExtension(_entry.Path), StringComparison.OrdinalIgnoreCase)) name += "_cut";
+        bool same = string.Equals(name, Path.GetFileNameWithoutExtension(_entry.Path), StringComparison.OrdinalIgnoreCase);
+        if (same) name += Preset switch { ExportPreset.Discord => "_discord", ExportPreset.Gif => "", _ => "_cut" };
         var temp = await ExportToTempAsync(name);
         if (temp == null) return;
         try
         {
-            var target = Unique(Path.Combine(Path.GetDirectoryName(_entry.Path)!, name + ".mp4"));
+            var target = Unique(Path.Combine(Path.GetDirectoryName(_entry.Path)!, name + OutputExt));
             File.Move(temp, target);
             FilesChanged = true;
-            StatusText.Text = Loc.F("E.Saved", Path.GetFileName(target));
+            _lastSaved = target;
+            StatusText.Text = Loc.F("E.Saved", Path.GetFileName(target)) + $" · {WindowHelper.FormatBytes(new FileInfo(target).Length)}";
+            CopyResultBtn.Visibility = FolderResultBtn.Visibility = Visibility.Visible;
             Log.Info($"Gallery: saved cut {target}");
         }
         catch (Exception ex)

@@ -19,6 +19,9 @@ public sealed class RangeTimeline : FrameworkElement
 
     private double _duration, _from, _to, _position = -1;
     private IList<ImageSource?>? _strip;
+    private float[]? _wave;
+    private static readonly Brush WaveBrush = Freeze(new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)));
+    private static Brush Freeze(Brush b) { b.Freeze(); return b; }
 
     public double Step { get; set; } = 0.5;
     public bool Compact { get; set; }
@@ -30,6 +33,9 @@ public sealed class RangeTimeline : FrameworkElement
     public double To { get => _to; set { _to = value; InvalidateVisual(); } }
     public double Position { get => _position; set { _position = value; InvalidateVisual(); } }
     public IList<ImageSource?>? Strip { get => _strip; set { _strip = value; InvalidateVisual(); } }
+    /// <summary>Peak envelope (0..1) over the whole duration, drawn as a waveform.</summary>
+    public float[]? Wave { get => _wave; set { _wave = value; _waveMax = value is { Length: > 0 } ? value.Max() : 0; InvalidateVisual(); } }
+    private float _waveMax;
 
     /// <summary>A handle moved (true = "from"); the value is already snapped.</summary>
     public event Action<bool>? RangeDragging;
@@ -82,6 +88,7 @@ public sealed class RangeTimeline : FrameworkElement
             }
             dc.Pop();
         }
+        if (_wave is { Length: > 0 } wave) DrawWave(dc, wave, top, bh);
         if (_duration <= 0) return;
 
         double xf = X(_from), xt = X(_to);
@@ -89,7 +96,7 @@ public sealed class RangeTimeline : FrameworkElement
         if (xf > HandleW) dc.DrawRectangle(dim, null, new Rect(HandleW, top, xf - HandleW, bh));
         if (xt < HandleW + Inner) dc.DrawRectangle(dim, null, new Rect(xt, top, HandleW + Inner - xt, bh));
         if (Compact && _strip == null)
-            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(90, 0xEF, 0x44, 0x44)), null, new Rect(xf, top, Math.Max(0, xt - xf), bh));
+            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb((byte)(_wave != null ? 45 : 90), 0xEF, 0x44, 0x44)), null, new Rect(xf, top, Math.Max(0, xt - xf), bh));
 
         // selection frame
         var pen = new Pen(Accent, Compact ? 2 : 3);
@@ -126,6 +133,34 @@ public sealed class RangeTimeline : FrameworkElement
                 dc.DrawGeometry(Brushes.White, null, tri);
             }
         }
+    }
+
+    private void DrawWave(DrawingContext dc, float[] wave, double top, double bh)
+    {
+        const double col = 2; // px per bar
+        int cols = (int)(Inner / col);
+        if (cols <= 0) return;
+        double mid = top + bh / 2, half = bh / 2 - 2;
+        var geo = new StreamGeometry();
+        using (var g = geo.Open())
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                int b0 = (int)((long)c * wave.Length / cols), b1 = Math.Max(b0 + 1, (int)((long)(c + 1) * wave.Length / cols));
+                float peak = 0;
+                for (int b = b0; b < b1 && b < wave.Length; b++) peak = Math.Max(peak, wave[b]);
+                // normalize to the loudest moment (but not below -34 dBFS, so silence stays flat);
+                // the square root keeps quiet speech visible next to loud shots
+                double h = Math.Max(0.5, Math.Sqrt(Math.Min(1, peak / Math.Max(_waveMax, 0.02f))) * half);
+                double x = HandleW + c * col;
+                g.BeginFigure(new Point(x, mid - h), true, true);
+                g.LineTo(new Point(x + col - 0.6, mid - h), false, false);
+                g.LineTo(new Point(x + col - 0.6, mid + h), false, false);
+                g.LineTo(new Point(x, mid + h), false, false);
+            }
+        }
+        geo.Freeze();
+        dc.DrawGeometry(WaveBrush, null, geo);
     }
 
     private void DrawHandle(DrawingContext dc, Rect r, bool left)

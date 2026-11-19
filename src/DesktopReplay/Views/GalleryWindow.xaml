@@ -28,15 +28,21 @@
                     x:Name="card">
                 <StackPanel>
                     <v:AspectBox>
-                        <Grid Background="Black" Cursor="Hand" MouseLeftButtonUp="OnTilePreview" ToolTip="{l:T G.Preview}">
+                        <Grid Background="Black" Cursor="Hand" MouseLeftButtonUp="OnTileClick" MouseEnter="OnThumbEnter" MouseLeave="OnThumbLeave">
                             <Grid.Clip>
                                 <RectangleGeometry RadiusX="8" RadiusY="8" Rect="0,0,4000,4000" />
                             </Grid.Clip>
                             <Image Source="{Binding Thumb}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" />
                             <TextBlock Text="&#xE714;" FontFamily="{StaticResource Icons}" FontSize="28" Foreground="#55FFFFFF"
                                        HorizontalAlignment="Center" VerticalAlignment="Center" x:Name="noThumb" Visibility="Collapsed" />
-                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Padding="6,2" CornerRadius="4" Background="#C0000000">
+                            <Border x:Name="badge" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Padding="6,2" CornerRadius="4" Background="#C0000000">
                                 <TextBlock Text="{Binding DurationText}" FontSize="12" Foreground="White" />
+                            </Border>
+                            <Border x:Name="check" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Width="24" Height="24" CornerRadius="6"
+                                    Background="#B0000000" BorderBrush="#B0FFFFFF" BorderThickness="1.5" Visibility="Collapsed"
+                                    MouseLeftButtonUp="OnCheckClick" ToolTip="{l:T G.SelectHint}">
+                                <TextBlock x:Name="checkMark" Text="&#xE73E;" FontFamily="{StaticResource Icons}" FontSize="13" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
                             </Border>
                             <Border x:Name="play" Width="48" Height="48" CornerRadius="24" Background="#B0000000" Visibility="Collapsed"
                                     HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -50,10 +56,11 @@
                         <TextBlock Text="{Binding InfoText}" Style="{StaticResource Small}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="6,0,6,6">
-                        <Button Style="{StaticResource IconButton}" Content="&#xE768;" ToolTip="{l:T G.Preview}" Click="OnPreview" />
-                        <Button Style="{StaticResource IconButton}" Content="&#xE8C6;" ToolTip="{l:T G.Cut}" Click="OnCut" />
+                        <Button x:Name="previewBtn" Style="{StaticResource IconButton}" Content="&#xE768;" ToolTip="{l:T G.Preview}" Click="OnPreview" />
+                        <Button x:Name="cutBtn" Style="{StaticResource IconButton}" Content="&#xE8C6;" ToolTip="{l:T G.Cut}" Click="OnCut" />
+                        <Button Style="{StaticResource IconButton}" Content="&#xE8C8;" ToolTip="{l:T G.CopyHint}" Click="OnCopy" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE838;" ToolTip="{l:T OpenFolder}" Click="OnShowInFolder" />
-                        <Button Style="{StaticResource IconButton}" Content="&#xE8A7;" ToolTip="{l:T G.OpenPlayer}" Click="OnOpenPlayer" />
+                        <Button x:Name="playerBtn" Style="{StaticResource IconButton}" Content="&#xE8A7;" ToolTip="{l:T G.OpenPlayer}" Click="OnOpenPlayer" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE74D;" ToolTip="{l:T G.Delete}" Click="OnDelete" Foreground="{StaticResource Muted}" />
                     </StackPanel>
                 </StackPanel>
@@ -62,7 +69,27 @@
                 <Trigger SourceName="card" Property="IsMouseOver" Value="True">
                     <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Hover}" />
                     <Setter TargetName="play" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="check" Property="Visibility" Value="Visible" />
                 </Trigger>
+                <DataTrigger Binding="{Binding ShowCheck}" Value="True">
+                    <Setter TargetName="check" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="play" Property="Opacity" Value="0" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}" />
+                    <Setter TargetName="card" Property="BorderThickness" Value="2" />
+                    <Setter TargetName="check" Property="Background" Value="{StaticResource Accent}" />
+                    <Setter TargetName="check" Property="BorderBrush" Value="{StaticResource Accent}" />
+                    <Setter TargetName="checkMark" Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsImage}" Value="True">
+                    <Setter TargetName="badge" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="play" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="cutBtn" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="playerBtn" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="previewBtn" Property="Content" Value="&#xE8A7;" />
+                    <Setter TargetName="previewBtn" Property="ToolTip" Value="{l:T Open}" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding Thumb}" Value="{x:Null}">
                     <Setter TargetName="noThumb" Property="Visibility" Value="Visible" />
                 </DataTrigger>
@@ -83,11 +110,23 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Width="210">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,24,0">
                 <TextBlock Text="&#xE8B9;" FontFamily="{StaticResource Icons}" FontSize="18" VerticalAlignment="Center" />
-                <TextBlock Text="{l:T G.Title}" FontSize="18" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                <TextBlock Text="{l:T G.Title}" FontSize="18" FontWeight="SemiBold" Margin="10,0,18,0" VerticalAlignment="Center" />
+                <RadioButton x:Name="TabVideos" GroupName="Tabs" Style="{StaticResource Chip}" IsChecked="True" Checked="OnTabChanged" Padding="14,6">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE714;" FontFamily="{StaticResource Icons}" FontSize="12" Margin="0,0,7,0" VerticalAlignment="Center" />
+                        <TextBlock Text="{l:T G.TabVideos}" />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="TabShots" GroupName="Tabs" Style="{StaticResource Chip}" Checked="OnTabChanged" Padding="14,6">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE722;" FontFamily="{StaticResource Icons}" FontSize="12" Margin="0,0,7,0" VerticalAlignment="Center" />
+                        <TextBlock Text="{l:T G.TabShots}" />
+                    </StackPanel>
+                </RadioButton>
             </StackPanel>
-            <Grid Grid.Column="1" Width="560" HorizontalAlignment="Left">
+            <Grid Grid.Column="1" MaxWidth="560" HorizontalAlignment="Stretch">
                 <TextBox x:Name="SearchBox" Padding="34,7,30,7" TextChanged="OnFilterChanged" />
                 <TextBlock Text="&#xE721;" FontFamily="{StaticResource Icons}" Foreground="{StaticResource Muted}" Margin="12,0,0,0"
                            VerticalAlignment="Center" IsHitTestVisible="False" />
@@ -136,8 +175,34 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
+
+                <Border x:Name="SelectionBar" Grid.Row="2" Margin="6,0,6,8" Padding="14,6" CornerRadius="8" Background="#26EF4444"
+                        BorderBrush="{StaticResource Accent}" BorderThickness="1" Visibility="Collapsed">
+                    <DockPanel>
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                            <Button Click="OnSelectAll" Style="{StaticResource GhostButton}" Content="{l:T G.SelectAll}" Padding="10,4" />
+                            <Button Click="OnCopySelected" Margin="6,0,0,0" Padding="10,4">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8C8;" FontFamily="{StaticResource Icons}" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="12" />
+                                    <TextBlock Text="{l:T G.Copy}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="OnDeleteSelected" Margin="6,0,0,0" Padding="10,4">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74D;" FontFamily="{StaticResource Icons}" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="12" />
+                                    <TextBlock Text="{l:T G.Delete}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="OnClearSelection" Style="{StaticResource GhostButton}" Margin="6,0,0,0" Padding="8,4" ToolTip="{l:T G.ClearSelection}">
+                                <TextBlock Text="&#xE711;" FontFamily="{StaticResource Icons}" FontSize="12" />
+                            </Button>
+                        </StackPanel>
+                        <TextBlock x:Name="SelectionText" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    </DockPanel>
+                </Border>
 
                 <!-- Sort + quick date filters -->
                 <WrapPanel Margin="6,0,6,8">
@@ -157,6 +222,7 @@
                     <TextBlock Text="—" Style="{StaticResource Small}" Margin="6,0" />
                     <v:DateBox x:Name="DateTo" SelectedDateChanged="OnDateChanged" Margin="0,0,22,0" />
 
+                    <StackPanel x:Name="DurationFilter" Orientation="Horizontal">
                     <TextBlock Text="{l:T G.Length}" Style="{StaticResource Small}" Margin="0,0,8,0" />
                     <TextBlock Text="{l:T G.From}" Style="{StaticResource Small}" Margin="0,0,6,0" />
                     <TextBox x:Name="DurMin" Style="{StaticResource NumBox}" TextChanged="OnFilterChanged" />
@@ -164,12 +230,13 @@
                     <TextBlock Text="{l:T G.To}" Style="{StaticResource Small}" Margin="12,0,6,0" />
                     <TextBox x:Name="DurMax" Style="{StaticResource NumBox}" TextChanged="OnFilterChanged" />
                     <ComboBox x:Name="DurMaxUnit" Style="{StaticResource UnitCombo}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectionChanged="OnFilterChanged" />
+                    </StackPanel>
 
                     <Button Style="{StaticResource GhostButton}" Content="{l:T G.ResetFilters}" Click="OnResetFilters" Margin="14,0,0,0" Padding="10,5" />
                     <TextBlock x:Name="CountText" Style="{StaticResource Small}" Margin="10,0,0,0" />
                 </WrapPanel>
 
-                <ScrollViewer x:Name="Scroller" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                <ScrollViewer x:Name="Scroller" Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                               PreviewMouseWheel="OnGridWheel">
                     <ItemsControl x:Name="TileList" ItemTemplate="{StaticResource TileTemplate}" Margin="0,0,0,12">
                         <ItemsControl.ItemsPanel>
@@ -179,7 +246,7 @@
                         </ItemsControl.ItemsPanel>
                     </ItemsControl>
                 </ScrollViewer>
-                <StackPanel x:Name="EmptyPanel" Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
+                <StackPanel x:Name="EmptyPanel" Grid.Row="3" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
                     <TextBlock Text="&#xE8B9;" FontFamily="{StaticResource Icons}" FontSize="40" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" />
                     <TextBlock x:Name="EmptyText" Foreground="{StaticResource Muted}" Margin="0,12,0,0" HorizontalAlignment="Center" />
                 </StackPanel>

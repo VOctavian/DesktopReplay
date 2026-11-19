@@ -73,7 +73,7 @@ public static class SelfTest
     private static string Version() => ffmpeg.av_version_info();
 
     /// <summary>"DesktopReplay.exe --probe file.mp4": writes a stream/frame-rate report next to the file.</summary>
-    public static int ExportTest(string input, string output, double from, double to, bool shorts, bool merge)
+    public static int ExportTest(string input, string output, double from, double to, bool shorts, bool merge, Library.ExportPreset preset = Library.ExportPreset.Original)
     {
         FF.Init();
         var lines = new List<string>();
@@ -84,7 +84,8 @@ public static class SelfTest
             var tracks = info.Audio.Select((a, i) => new Library.AudioTrackEdit(a.Index, a.Title, i != 1, i == 2 ? 0.5 : 1.0,
                 i == 3 ? from + (to - from) / 2 : from, to)).ToList();
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            Library.ClipExporter.Export(new Library.ExportRequest(input, output, from, to, shorts, 0.25, tracks, merge, "Mix"), null, CancellationToken.None);
+            Library.ClipExporter.Export(new Library.ExportRequest(input, output, from, to, shorts, 0.25, tracks, merge, "Mix", preset, Library.ClipExporter.DiscordLimit), null, CancellationToken.None);
+            lines.Add($"size {new FileInfo(output).Length / 1024} KB");
             lines.Add($"export took {sw.ElapsedMilliseconds} ms");
             int r = Probe(output, lines.Add, 0);
             var thumbs = Library.MediaLibrary.Filmstrip(output, 4, 160);

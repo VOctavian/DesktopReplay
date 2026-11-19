@@ -25,8 +25,22 @@ public sealed class VideoItem : INotifyPropertyChanged
 
     public VideoItem(LibraryEntry e) => Entry = e;
 
+    private bool _selected, _showCheck;
+    public bool IsSelected { get => _selected; set { if (_selected == value) return; _selected = value; PropertyChanged?.Invoke(this, new(nameof(IsSelected))); } }
+    /// <summary>Selection mode is on (something is selected): checkboxes are shown on every tile.</summary>
+    public bool ShowCheck { get => _showCheck; set { if (_showCheck == value) return; _showCheck = value; PropertyChanged?.Invoke(this, new(nameof(ShowCheck))); } }
+    public bool IsImage => Entry.IsImage;
+
     public string DurationText => Entry.Duration > 0 ? WindowHelper.FormatDuration(TimeSpan.FromSeconds(Math.Round(Entry.Duration))) : "—";
-    public string InfoText => $"{WindowHelper.FormatBytes(Entry.Size)} · {Entry.Date.ToString("g", Loc.I.Language == "en" ? CultureInfo.GetCultureInfo("en-US") : CultureInfo.GetCultureInfo("ru-RU"))}";
+    public string InfoText
+    {
+        get
+        {
+            var date = Entry.Date.ToString("g", Loc.I.Language == "en" ? CultureInfo.GetCultureInfo("en-US") : CultureInfo.GetCultureInfo("ru-RU"));
+            var size = WindowHelper.FormatBytes(Entry.Size);
+            return IsImage && Entry.Width > 0 ? $"{Entry.Width}×{Entry.Height} · {size} · {date}" : $"{size} · {date}";
+        }
+    }
 
     public void Update(LibraryEntry e)
     {
@@ -54,6 +68,11 @@ public partial class GalleryWindow : Window
     private readonly DispatcherTimer _rescanTimer, _filterTimer;
     private readonly CancellationTokenSource _cts = new();
     private bool _loading, _scanning, _rescanPending;
+    private bool _images; // screenshots tab
+    private VideoItem? _anchor; // for Shift+click ranges
+    private readonly DispatcherTimer _hoverTimer;
+    private Grid? _hoverHost;
+    private MediaElement? _hoverPlayer;
 
     public GalleryWindow(Func<AppSettings> settings, Action saveSettings)
     {
@@ -66,15 +85,11 @@ public partial class GalleryWindow : Window
         _rescanTimer.Tick += (_, _) => { _rescanTimer.Stop(); _ = RescanAsync(); };
         _filterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _filterTimer.Tick += (_, _) => { _filterTimer.Stop(); ApplyFilter(); };
+        _hoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        _hoverTimer.Tick += (_, _) => { _hoverTimer.Stop(); StartHoverPreview(); };
 
         _loading = true;
-        SortCombo.ItemsSource = new[]
-        {
-            new Opt(Loc.T("G.SortNewest"), SortMode.Newest), new Opt(Loc.T("G.SortOldest"), SortMode.Oldest),
-            new Opt(Loc.T("G.SortShortest"), SortMode.Shortest), new Opt(Loc.T("G.SortLongest"), SortMode.Longest),
-            new Opt(Loc.T("G.SortSize"), SortMode.Largest), new Opt(Loc.T("G.SortName"), SortMode.Name),
-        };
-        SortCombo.SelectedValue = Enum.TryParse<SortMode>(app.GallerySort, out var sm) ? sm : SortMode.Newest;
+        FillSortOptions(Enum.TryParse<SortMode>(app.GallerySort, out var sm) ? sm : SortMode.Newest);
         var units = new[] { new Opt(Loc.T("G.Sec"), 1.0), new Opt(Loc.T("G.Min"), 60.0), new Opt(Loc.T("G.Hour"), 3600.0) };
         DurMinUnit.ItemsSource = units; DurMinUnit.SelectedIndex = 0;
         DurMaxUnit.ItemsSource = units; DurMaxUnit.SelectedIndex = 1;
@@ -90,6 +105,7 @@ public partial class GalleryWindow : Window
         Closed += (_, _) =>
         {
             _cts.Cancel();
+            StopHoverPreview();
             foreach (var w in _watchers) w.Dispose();
             _settings().GalleryTileWidth = (int)ZoomSlider.Value;
             _settings().GallerySort = SortCombo.SelectedValue?.ToString() ?? "Newest";
@@ -97,19 +113,55 @@ public partial class GalleryWindow : Window
         };
     }
 
-    private IEnumerable<string> Folders => new[] { _settings().OutputFolder, _settings().EffectiveRecordingsFolder };
+    private IEnumerable<string> Folders => _images
+        ? new[] { _settings().EffectiveScreenshotsFolder }
+        : new[] { _settings().OutputFolder, _settings().EffectiveRecordingsFolder };
+
+    private IEnumerable<string> AllFolders => new[] { _settings().OutputFolder, _settings().EffectiveRecordingsFolder, _settings().EffectiveScreenshotsFolder };
+
+    private void FillSortOptions(SortMode selected)
+    {
+        var opts = new List<Opt> { new(Loc.T("G.SortNewest"), SortMode.Newest), new(Loc.T("G.SortOldest"), SortMode.Oldest) };
+        if (!_images) { opts.Add(new(Loc.T("G.SortShortest"), SortMode.Shortest)); opts.Add(new(Loc.T("G.SortLongest"), SortMode.Longest)); }
+        opts.Add(new(Loc.T("G.SortSize"), SortMode.Largest));
+        opts.Add(new(Loc.T("G.SortName"), SortMode.Name));
+        SortCombo.ItemsSource = opts;
+        SortCombo.SelectedValue = opts.Any(o => (SortMode)o.Value == selected) ? selected : SortMode.Newest;
+    }
+
+    private void OnTabChanged(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        bool images = TabShots.IsChecked == true;
+        if (images == _images) return;
+        _images = images;
+        StopHoverPreview();
+        _loading = true;
+        FillSortOptions(SortCombo.SelectedValue as SortMode? ?? SortMode.Newest);
+        DurationFilter.Visibility = images ? Visibility.Collapsed : Visibility.Visible;
+        if (GroupList.Items.Count > 0) GroupList.SelectedIndex = 0;
+        _loading = false;
+        _items.Clear();
+        _view.Clear();
+        UpdateSelection();
+        _ = RescanAsync();
+    }
 
     // ---------- scanning ----------
 
     private void StartWatching()
     {
-        foreach (var root in MediaLibrary.Roots(Folders))
+        foreach (var root in MediaLibrary.Roots(AllFolders))
         {
             try
             {
                 if (!Directory.Exists(root)) continue;
                 var w = new FileSystemWatcher(root) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size | NotifyFilters.LastWrite };
-                FileSystemEventHandler h = (_, e) => { if (MediaLibrary.IsVideo(e.FullPath) || !Path.HasExtension(e.FullPath)) Dispatcher.BeginInvoke(ScheduleRescan); };
+                FileSystemEventHandler h = (_, e) =>
+                {
+                    if (MediaLibrary.IsVideo(e.FullPath) || MediaLibrary.IsImage(e.FullPath) || !Path.HasExtension(e.FullPath))
+                        Dispatcher.BeginInvoke(ScheduleRescan);
+                };
                 w.Created += h; w.Deleted += h; w.Changed += h;
                 w.Renamed += (_, _) => Dispatcher.BeginInvoke(ScheduleRescan);
                 w.EnableRaisingEvents = true;
@@ -132,7 +184,9 @@ public partial class GalleryWindow : Window
         try
         {
             var folders = Folders.ToList();
-            var list = await Task.Run(() => MediaLibrary.Scan(folders, _cts.Token));
+            bool images = _images;
+            var list = await Task.Run(() => MediaLibrary.Scan(folders, _cts.Token, images));
+            if (images != _images) { _rescanPending = true; return; } // tab switched meanwhile
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in list)
             {
@@ -203,8 +257,8 @@ public partial class GalleryWindow : Window
                                                    i.Entry.Group.Contains(q, StringComparison.CurrentCultureIgnoreCase));
         if (from != null) items = items.Where(i => i.Entry.Date >= from);
         if (to != null) items = items.Where(i => i.Entry.Date < to);
-        if (minS != null) items = items.Where(i => i.Entry.Duration >= minS);
-        if (maxS != null) items = items.Where(i => i.Entry.Duration <= maxS);
+        if (!_images && minS != null) items = items.Where(i => i.Entry.Duration >= minS);
+        if (!_images && maxS != null) items = items.Where(i => i.Entry.Duration <= maxS);
 
         items = (SortCombo.SelectedValue as SortMode? ?? SortMode.Newest) switch
         {
@@ -219,9 +273,11 @@ public partial class GalleryWindow : Window
 
         _view.Clear();
         foreach (var i in list) _view.Add(i);
-        CountText.Text = Loc.F("G.Count", list.Count, WindowHelper.FormatBytes(list.Sum(i => i.Entry.Size)));
+        CountText.Text = Loc.F(_images ? "G.CountShots" : "G.Count", list.Count, WindowHelper.FormatBytes(list.Sum(i => i.Entry.Size)));
         EmptyPanel.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyText.Text = _items.Count == 0 ? Loc.T("G.EmptyFolder") : Loc.T("G.NothingFound");
+        EmptyText.Text = _items.Count == 0 ? Loc.T(_images ? "G.EmptyShots" : "G.EmptyFolder") : Loc.T("G.NothingFound");
+        foreach (var i in _items.Values) if (i.IsSelected && !list.Contains(i)) i.IsSelected = false; // hidden items leave the selection
+        UpdateSelection();
         _ = LoadThumbsAsync(list);
     }
 
@@ -314,9 +370,14 @@ public partial class GalleryWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; }
+        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        bool inText = Keyboard.FocusedElement is TextBox;
+        if (e.Key == Key.F && ctrl) { SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; }
         else if (e.Key == Key.F5) { _ = RescanAsync(); e.Handled = true; }
-        else if (e.Key == Key.Escape && !SearchBox.IsKeyboardFocused) Close();
+        else if (e.Key == Key.A && ctrl && !inText) { SelectAll(); e.Handled = true; }
+        else if (e.Key == Key.C && ctrl && !inText && Selected.Count > 0) { CopyItems(Selected); e.Handled = true; }
+        else if (e.Key == Key.Delete && !inText && Selected.Count > 0) { DeleteItems(Selected); e.Handled = true; }
+        else if (e.Key == Key.Escape && !inText) { if (Selected.Count > 0) ClearSelection(); else Close(); e.Handled = true; }
     }
 
     private void OnRefresh(object sender, RoutedEventArgs e) => _ = RescanAsync();
@@ -325,12 +386,156 @@ public partial class GalleryWindow : Window
 
     private static VideoItem? ItemOf(object sender) => (sender as FrameworkElement)?.DataContext as VideoItem;
 
-    private void OnTilePreview(object sender, MouseButtonEventArgs e) { if (ItemOf(sender) is { } i) OpenEditor(i, edit: false); }
-    private void OnPreview(object sender, RoutedEventArgs e) { if (ItemOf(sender) is { } i) OpenEditor(i, edit: false); }
+    /// <summary>Click on a thumbnail: Ctrl toggles, Shift selects a range, in selection mode a click toggles; otherwise opens.</summary>
+    private void OnTileClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemOf(sender) is not { } i) return;
+        var mods = Keyboard.Modifiers;
+        if ((mods & ModifierKeys.Shift) != 0 && _anchor != null && _view.Contains(_anchor))
+        {
+            int a = _view.IndexOf(_anchor), b = _view.IndexOf(i);
+            for (int k = Math.Min(a, b); k <= Math.Max(a, b); k++) _view[k].IsSelected = true;
+            UpdateSelection();
+        }
+        else if ((mods & ModifierKeys.Control) != 0 || Selected.Count > 0) Toggle(i);
+        else Open(i);
+        e.Handled = true;
+    }
+
+    private void OnCheckClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemOf(sender) is { } i) Toggle(i);
+        e.Handled = true;
+    }
+
+    private void Toggle(VideoItem i)
+    {
+        i.IsSelected = !i.IsSelected;
+        _anchor = i;
+        UpdateSelection();
+    }
+
+    private void Open(VideoItem i)
+    {
+        if (i.IsImage) App.OpenPath(i.Entry.Path);
+        else OpenEditor(i, edit: false);
+    }
+
+    private List<VideoItem> Selected => _view.Where(i => i.IsSelected).ToList();
+
+    private void UpdateSelection()
+    {
+        var sel = Selected;
+        bool any = sel.Count > 0;
+        foreach (var i in _view) i.ShowCheck = any;
+        SelectionBar.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+        if (any) SelectionText.Text = Loc.F("G.Selected", sel.Count, WindowHelper.FormatBytes(sel.Sum(i => i.Entry.Size)));
+    }
+
+    private void SelectAll()
+    {
+        foreach (var i in _view) i.IsSelected = true;
+        UpdateSelection();
+    }
+
+    private void ClearSelection()
+    {
+        foreach (var i in _view) i.IsSelected = false;
+        _anchor = null;
+        UpdateSelection();
+    }
+
+    private void OnSelectAll(object sender, RoutedEventArgs e) => SelectAll();
+    private void OnClearSelection(object sender, RoutedEventArgs e) => ClearSelection();
+    private void OnCopySelected(object sender, RoutedEventArgs e) => CopyItems(Selected);
+    private void OnDeleteSelected(object sender, RoutedEventArgs e) => DeleteItems(Selected);
+    private void OnCopy(object sender, RoutedEventArgs e) { if (ItemOf(sender) is { } i) CopyItems(new() { i }); }
+
+    private void CopyItems(List<VideoItem> items)
+    {
+        if (items.Count == 0) return;
+        bool ok = FileActions.CopyToClipboard(items.Select(i => i.Entry.Path));
+        CountText.Text = ok ? Loc.F("G.Copied", items.Count) : Loc.T("G.CopyFailed");
+    }
+
+    private void DeleteItems(List<VideoItem> items)
+    {
+        if (items.Count == 0) return;
+        StopHoverPreview();
+        string question = items.Count == 1 ? Loc.F("G.DeleteConfirm", items[0].Entry.Name) : Loc.F("G.DeleteManyConfirm", items.Count, WindowHelper.FormatBytes(items.Sum(i => i.Entry.Size)));
+        if (MessageBox.Show(this, question, Loc.T("G.Delete"), MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        var failed = new List<string>();
+        foreach (var i in items)
+        {
+            try
+            {
+                FileActions.Recycle(i.Entry.Path);
+                _items.Remove(i.Entry.Path);
+                _view.Remove(i);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Delete failed for {i.Entry.Path}: {ex.Message}");
+                failed.Add(i.Entry.Name);
+            }
+        }
+        if (failed.Count > 0) MessageBox.Show(this, Loc.F("G.DeleteFailed", string.Join("\n", failed)), Loc.T("G.Delete"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        _anchor = null;
+        RebuildGroups();
+        ApplyFilter();
+    }
+
+    // ---------- hover preview ----------
+
+    private void OnThumbEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is not Grid g || ItemOf(sender) is not { IsImage: false }) return;
+        StopHoverPreview();
+        _hoverHost = g;
+        _hoverTimer.Start();
+    }
+
+    private void OnThumbLeave(object sender, MouseEventArgs e)
+    {
+        if (sender == _hoverHost) StopHoverPreview();
+    }
+
+    private void StartHoverPreview()
+    {
+        if (_hoverHost == null || ItemOf(_hoverHost) is not { } item || !File.Exists(item.Entry.Path)) return;
+        var player = new MediaElement
+        {
+            LoadedBehavior = MediaState.Manual, UnloadedBehavior = MediaState.Close, IsMuted = true,
+            Stretch = Stretch.UniformToFill, IsHitTestVisible = false, ScrubbingEnabled = false,
+        };
+        double start = item.Entry.Duration > 8 ? item.Entry.Duration * 0.2 : 0;
+        player.MediaOpened += (_, _) => { if (start > 0) player.Position = TimeSpan.FromSeconds(start); };
+        player.MediaEnded += (_, _) => { player.Position = TimeSpan.FromSeconds(start); player.Play(); };
+        player.MediaFailed += (_, _) => StopHoverPreview();
+        _hoverHost.Children.Insert(1, player); // above the thumbnail, below the badges
+        player.Source = new Uri(item.Entry.Path);
+        player.Play();
+        _hoverPlayer = player;
+    }
+
+    private void StopHoverPreview()
+    {
+        _hoverTimer.Stop();
+        if (_hoverPlayer != null)
+        {
+            try { _hoverPlayer.Stop(); _hoverPlayer.Close(); } catch { }
+            (_hoverPlayer.Parent as Panel)?.Children.Remove(_hoverPlayer);
+            _hoverPlayer = null;
+        }
+        _hoverHost = null;
+    }
+
+    private void OnPreview(object sender, RoutedEventArgs e) { if (ItemOf(sender) is { } i) Open(i); }
     private void OnCut(object sender, RoutedEventArgs e) { if (ItemOf(sender) is { } i) OpenEditor(i, edit: true); }
 
     private void OpenEditor(VideoItem item, bool edit)
     {
+        StopHoverPreview();
         if (!File.Exists(item.Entry.Path)) { ScheduleRescan(); return; }
         var w = new ClipEditorWindow(item.Entry, edit) { Owner = this };
         w.Closed += (_, _) => { if (w.FilesChanged) _ = RescanAsync(); };
@@ -349,12 +554,7 @@ public partial class GalleryWindow : Window
 
     private void OnDelete(object sender, RoutedEventArgs e)
     {
-        if (ItemOf(sender) is not { } i) return;
-        if (!FileActions.ConfirmAndRecycle(this, i.Entry.Path)) return;
-        _items.Remove(i.Entry.Path);
-        _view.Remove(i);
-        RebuildGroups();
-        ApplyFilter();
+        if (ItemOf(sender) is { } i) DeleteItems(new() { i });
     }
 }
 
@@ -364,6 +564,38 @@ public static class FileActions
     {
         try { Process.Start("explorer.exe", $"/select,\"{path}\""); }
         catch (Exception ex) { Log.Warn($"explorer failed: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Puts files on the clipboard as a file list, so Ctrl+V in Discord/Telegram/Explorer attaches them.
+    /// A single image also goes on as a bitmap (for apps that paste pictures).
+    /// </summary>
+    public static bool CopyToClipboard(IEnumerable<string> paths)
+    {
+        var list = paths.Where(File.Exists).ToArray();
+        if (list.Length == 0) return false;
+        var files = new System.Collections.Specialized.StringCollection();
+        files.AddRange(list);
+        var data = new DataObject();
+        data.SetFileDropList(files);
+        if (list.Length == 1 && MediaLibrary.IsImage(list[0]))
+        {
+            try
+            {
+                var img = new System.Windows.Media.Imaging.BitmapImage();
+                img.BeginInit();
+                img.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                img.UriSource = new Uri(list[0]);
+                img.EndInit();
+                data.SetImage(img);
+            }
+            catch { }
+        }
+        for (int i = 0; ; i++)
+        {
+            try { Clipboard.SetDataObject(data, true); return true; }
+            catch (System.Runtime.InteropServices.COMException) when (i < 5) { Thread.Sleep(60); } // clipboard busy
+        }
     }
 
     /// <summary>Moves a file to the Recycle Bin (not a permanent delete).</summary>

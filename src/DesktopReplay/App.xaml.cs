@@ -171,7 +171,7 @@ public partial class App : Application
         {
             case NoticeKind.ReplaySaved:
                 if (_settings.NotifySound) Sounds.Saved();
-                Popup(Loc.T("N.ReplaySaved"), Files(), ToastKind.Ok);
+                Popup(Loc.T("N.ReplaySaved"), Files(), ToastKind.Ok, 7, VideoActions(n.Paths));
                 break;
             case NoticeKind.RecordingStarted:
                 if (_settings.NotifySound) Sounds.Start();
@@ -179,11 +179,29 @@ public partial class App : Application
                 break;
             case NoticeKind.RecordingStopped:
                 if (_settings.NotifySound) Sounds.Stop();
-                Popup(Loc.T("N.RecordingStopped"), Files(), ToastKind.Ok);
+                Popup(Loc.T("N.RecordingStopped"), Files(), ToastKind.Ok, 7, VideoActions(n.Paths));
                 break;
             case NoticeKind.ScreenshotSaved:
                 if (_settings.NotifySound) Sounds.Shot();
-                Popup(Loc.T("N.ScreenshotSaved"), Files(), ToastKind.Ok, 2.5);
+                Popup(Loc.T("N.ScreenshotSaved"), Files(), ToastKind.Ok, 4, n.Paths.Count == 0 ? null : new[]
+                {
+                    new ToastAction(Loc.T("Open"), "\uE8A7", () => OpenPath(n.Paths[0])),
+                    new ToastAction(Loc.T("G.Copy"), "\uE8C8", () => Views.FileActions.CopyToClipboard(n.Paths)),
+                    new ToastAction(Loc.T("N.Folder"), "\uE838", () => Views.FileActions.ShowInFolder(n.Paths[0])),
+                });
+                break;
+            case NoticeKind.DiskBufferPaused:
+                Notify(Loc.F("N.DiskBufferPaused", n.Detail ?? ""), Loc.F("N.DiskFree", WindowHelper.FormatBytes(n.FreeBytes)), ToastKind.Error, error: true);
+                break;
+            case NoticeKind.DiskBufferResumed:
+                Popup(Loc.T("N.DiskBufferResumed"), Loc.F("N.DiskFree", WindowHelper.FormatBytes(n.FreeBytes)), ToastKind.Info, 4);
+                break;
+            case NoticeKind.DiskRecordingStopped:
+                Notify(Loc.F("N.DiskRecordingStopped", n.Detail ?? ""), Loc.F("N.DiskFree", WindowHelper.FormatBytes(n.FreeBytes)), ToastKind.Error, error: true);
+                break;
+            case NoticeKind.DiskNoSpaceForSave:
+                Notify(Loc.F("N.DiskNoSpaceForSave", n.Detail ?? ""),
+                    Loc.F("N.DiskNeed", WindowHelper.FormatBytes(n.NeededBytes), WindowHelper.FormatBytes(n.FreeBytes)), ToastKind.Error, error: true);
                 break;
             case NoticeKind.ReplayOn:
                 Popup(Loc.T("N.ReplayOn"), "", ToastKind.Info, 2);
@@ -205,9 +223,31 @@ public partial class App : Application
         UpdateTray();
     }
 
-    private void Popup(string title, string body, ToastKind kind, double seconds = 3.5)
+    private void Popup(string title, string body, ToastKind kind, double seconds = 3.5, IReadOnlyList<ToastAction>? actions = null)
     {
-        if (_settings.NotifyPopup) ToastWindow.Show(title, body, kind, seconds);
+        if (_settings.NotifyPopup) ToastWindow.Show(title, body, kind, seconds, actions);
+    }
+
+    private ToastAction[]? VideoActions(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0) return null;
+        var first = paths[0];
+        return new[]
+        {
+            new ToastAction(Loc.T("Open"), "\uE768", () => OpenPath(first)),
+            new ToastAction(Loc.T("G.Cut"), "\uE8C6", () => ShowEditor(first)),
+            new ToastAction(Loc.T("N.Folder"), "\uE838", () => Views.FileActions.ShowInFolder(first)),
+        };
+    }
+
+    /// <summary>Opens the cut editor for a file (from a toast).</summary>
+    public async void ShowEditor(string path)
+    {
+        if (!File.Exists(path)) return;
+        var entry = await Task.Run(() => DesktopReplay.Core.Library.MediaLibrary.EntryFor(path));
+        var w = new Views.ClipEditorWindow(entry, edit: true);
+        w.Show();
+        w.Activate();
     }
 
     private void Notify(string title, string body, ToastKind kind, bool error)

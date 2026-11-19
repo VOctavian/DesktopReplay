@@ -35,6 +35,21 @@ public sealed class PacketStore : IDisposable
     private int _pins;
     private long _keepUs;
     private volatile bool _bufferEnabled;
+    private volatile bool _paused;
+
+    /// <summary>Raised (on the writer thread) when a segment cannot be written, e.g. the disk is full. Buffering pauses.</summary>
+    public event Action<string>? WriteFailed;
+
+    /// <summary>Stops appending new segments but keeps what is buffered (low disk space).</summary>
+    public bool Paused
+    {
+        get => _paused;
+        set
+        {
+            _paused = value;
+            if (value) lock (_sync) { CloseCurrent(); _current = null; }
+        }
+    }
 
     public PacketStore(string directory, TimeSpan window, bool bufferEnabled)
     {
@@ -98,7 +113,7 @@ public sealed class PacketStore : IDisposable
                     {
                         try { l(p); } catch (Exception ex) { Log.Error("Packet listener failed", ex); }
                     }
-                    if (_bufferEnabled) Append(p);
+                    if (_bufferEnabled && !_paused) Append(p);
                 }
                 lock (_sync) _current?.Writer?.Flush();
             }
@@ -110,6 +125,18 @@ public sealed class PacketStore : IDisposable
     }
 
     private void Append(EncodedPacket p)
+    {
+        try { AppendCore(p); }
+        catch (IOException ex)
+        {
+            Log.Error("Buffer write failed (disk full?)", ex);
+            lock (_sync) { CloseCurrent(); _current = null; }
+            _paused = true;
+            WriteFailed?.Invoke(ex.Message);
+        }
+    }
+
+    private void AppendCore(EncodedPacket p)
     {
         lock (_sync)
         {
@@ -139,11 +166,11 @@ public sealed class PacketStore : IDisposable
                 if (p.Pts < _current.FirstUs) _current.FirstUs = p.Pts;
                 if (p.Pts > _current.LastUs) _current.LastUs = p.Pts;
             }
-            catch (IOException ex)
+            catch (IOException)
             {
-                Log.Error("Buffer write failed (disk full?)", ex);
                 CloseCurrent();
                 _current = null;
+                throw;
             }
         }
     }

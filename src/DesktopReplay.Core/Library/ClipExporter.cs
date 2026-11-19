@@ -11,10 +11,14 @@ namespace DesktopReplay.Core.Library;
 /// <param name="To">End of the audible part, seconds on the source timeline.</param>
 public sealed record AudioTrackEdit(int StreamIndex, string Title, bool Include, double Volume, double From, double To);
 
+public enum ExportPreset { Original, Discord, Gif }
+
 /// <param name="ShortsX">Horizontal position of the 9:16 crop: 0 = left edge, 1 = right edge.</param>
+/// <param name="TargetBytes">Discord preset: the file must not be larger than this.</param>
 public sealed record ExportRequest(
     string Input, string Output, double From, double To,
-    bool Shorts, double ShortsX, IReadOnlyList<AudioTrackEdit> Tracks, bool MergeAudio, string MergedTitle);
+    bool Shorts, double ShortsX, IReadOnlyList<AudioTrackEdit> Tracks, bool MergeAudio, string MergedTitle,
+    ExportPreset Preset = ExportPreset.Original, long TargetBytes = 0);
 
 /// <summary>
 /// Frame-accurate cut: decodes, trims, optionally crops to 9:16 and mixes audio tracks, then re-encodes
@@ -46,7 +50,24 @@ public static unsafe class ClipExporter
 
     private static string Num(double v) => v.ToString("0.######", CultureInfo.InvariantCulture);
 
+    public const long DiscordLimit = 10L * 1000 * 1000; // Discord's free upload limit is 10 MB
+
     public static void Export(ExportRequest r, IProgress<double>? progress, CancellationToken ct)
+    {
+        if (r.Preset != ExportPreset.Discord) { ExportOnce(r, progress, ct, 1); return; }
+        // size-targeted: if the encoder overshoots, retry with a proportionally lower budget
+        double scale = 1;
+        for (int attempt = 1; ; attempt++)
+        {
+            ExportOnce(r, progress, ct, scale);
+            long size = new FileInfo(r.Output).Length;
+            Log.Info($"Export (Discord) attempt {attempt}: {size / 1024} KB, limit {r.TargetBytes / 1024} KB");
+            if (size <= r.TargetBytes || attempt == 3) return;
+            scale *= r.TargetBytes / (double)size * 0.95;
+        }
+    }
+
+    private static void ExportOnce(ExportRequest r, IProgress<double>? progress, CancellationToken ct, double budgetScale)
     {
         FF.Init();
         AVFormatContext* inFmt = null, outFmt = null;
@@ -71,9 +92,23 @@ public static unsafe class ClipExporter
             double halfFrame = 0.5 / fps;
 
             var tracks = new List<AudioTrackEdit>();
-            foreach (var t in r.Tracks)
-                if (t.Include && t.StreamIndex < inFmt->nb_streams && inFmt->streams[t.StreamIndex]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO)
-                    tracks.Add(t);
+            if (r.Preset != ExportPreset.Gif)
+                foreach (var t in r.Tracks)
+                    if (t.Include && t.StreamIndex < inFmt->nb_streams && inFmt->streams[t.StreamIndex]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO)
+                        tracks.Add(t);
+            // Discord plays only the first audio track: keep one (or the merge of all)
+            if (r.Preset == ExportPreset.Discord && !r.MergeAudio && tracks.Count > 1) tracks = tracks.Take(1).ToList();
+            bool merge = r.MergeAudio || r.Preset == ExportPreset.Discord;
+
+            // Discord: split the size budget between audio and video
+            long discordAudio = 0, discordVideo = 0;
+            if (r.Preset == ExportPreset.Discord)
+            {
+                double secs = Math.Max(0.5, r.To - r.From);
+                double totalBps = r.TargetBytes * 8 * 0.95 * budgetScale / secs; // ~5% container overhead
+                discordAudio = tracks.Count == 0 ? 0 : totalBps > 1_000_000 ? 128_000 : 96_000;
+                discordVideo = (long)Math.Max(120_000, totalBps - discordAudio);
+            }
             var used = new HashSet<int> { vs };
             foreach (var t in tracks) used.Add(t.StreamIndex);
             for (int i = 0; i < inFmt->nb_streams; i++)
@@ -114,7 +149,27 @@ public static unsafe class ClipExporter
                 int cx = (int)Math.Round((vin.Dec->width - cw) * Math.Clamp(r.ShortsX, 0, 1)) & ~1;
                 desc.Append($",crop={cw}:{vin.Dec->height & ~1}:{cx}:0");
             }
-            desc.Append(",format=yuv420p[vout]");
+            int outW = r.Shorts ? Math.Min(vin.Dec->width, (int)Math.Round(vin.Dec->height * 9.0 / 16.0)) & ~1 : vin.Dec->width;
+            int outH = vin.Dec->height & ~1;
+            if (r.Preset == ExportPreset.Gif)
+            {
+                // 15 fps, small size, one optimized palette for the whole clip
+                string scale = r.Shorts ? (outH > 640 ? "-2:640" : "-2:-2") : (outW > 480 ? "480:-2" : "-2:-2");
+                desc.Append($",fps=15,scale={scale}:flags=lanczos,split[g1][g2];[g1]palettegen=max_colors=256:stats_mode=diff[pal];" +
+                            "[g2][pal]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle[vout]");
+            }
+            else
+            {
+                if (r.Preset == ExportPreset.Discord)
+                {
+                    // pick a resolution the bitrate can carry (~0.085 bits per pixel per frame for H.264)
+                    double maxPixels = discordVideo / (0.085 * Math.Min(fps, 60));
+                    double s = Math.Min(1, Math.Sqrt(maxPixels / ((double)outW * outH)));
+                    int h = Math.Max(240, (int)Math.Round(outH * s)) & ~1;
+                    if (h < outH) desc.Append($",scale=-2:{h}:flags=lanczos");
+                }
+                desc.Append(",format=yuv420p[vout]");
+            }
 
             var audioLabels = new List<(string Label, string Title)>();
             for (int i = 0; i < tracks.Count; i++)
@@ -128,7 +183,7 @@ public static unsafe class ClipExporter
                 desc.Append($",aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[t{i}]");
                 audioLabels.Add(($"t{i}", t.Title));
             }
-            if (r.MergeAudio && audioLabels.Count > 1)
+            if (merge && audioLabels.Count > 1)
             {
                 desc.Append(';');
                 foreach (var a in audioLabels) desc.Append($"[{a.Label}]");
@@ -150,8 +205,9 @@ public static unsafe class ClipExporter
             FF.Check(ffmpeg.avfilter_graph_config(graph, null), "avfilter_graph_config");
 
             // ---- output ----
-            bool mp4 = !r.Output.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase);
-            FF.Check(ffmpeg.avformat_alloc_output_context2(&outFmt, null, mp4 ? "mp4" : "matroska", r.Output), "alloc output");
+            bool gif = r.Preset == ExportPreset.Gif;
+            bool mp4 = !gif && !r.Output.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase);
+            FF.Check(ffmpeg.avformat_alloc_output_context2(&outFmt, null, gif ? "gif" : mp4 ? "mp4" : "matroska", r.Output), "alloc output");
             bool globalHeader = (outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0;
 
             long srcBitrate = vst->codecpar->bit_rate;
@@ -159,11 +215,14 @@ public static unsafe class ClipExporter
                 srcBitrate = (long)(new FileInfo(r.Input).Length * 8 / (inFmt->duration / (double)ffmpeg.AV_TIME_BASE) * 0.9);
             if (srcBitrate <= 0) srcBitrate = 20_000_000;
             string codecName = ffmpeg.avcodec_get_name(vst->codecpar->codec_id);
-            outputs[0].Enc = OpenVideoEncoder(outputs[0].Sink, codecName, srcBitrate, fps, globalHeader);
+            outputs[0].Enc = gif ? OpenGifEncoder(outputs[0].Sink)
+                : r.Preset == ExportPreset.Discord ? OpenVideoEncoder(outputs[0].Sink, "h264", discordVideo, fps, globalHeader, constantRate: true)
+                : OpenVideoEncoder(outputs[0].Sink, codecName, srcBitrate, fps, globalHeader);
             for (int i = 1; i < outputs.Count; i++)
             {
                 var srcSt = inFmt->streams[tracks[Math.Min(i - 1, tracks.Count - 1)].StreamIndex];
-                long abr = srcSt->codecpar->bit_rate > 0 ? Math.Clamp(srcSt->codecpar->bit_rate, 96_000, 320_000) : 192_000;
+                long abr = r.Preset == ExportPreset.Discord ? discordAudio
+                    : srcSt->codecpar->bit_rate > 0 ? Math.Clamp(srcSt->codecpar->bit_rate, 96_000, 320_000) : 192_000;
                 outputs[i].Enc = OpenAudioEncoder(outputs[i].Sink, abr, globalHeader);
             }
 
@@ -282,9 +341,24 @@ public static unsafe class ClipExporter
         return io;
     }
 
-    private static AVCodecContext* OpenVideoEncoder(AVFilterContext* sink, string srcCodec, long bitrate, double fps, bool globalHeader)
+    private static AVCodecContext* OpenGifEncoder(AVFilterContext* sink)
     {
-        var names = srcCodec == "hevc" ? new[] { "hevc_nvenc", "h264_nvenc", "libx264" } : new[] { "h264_nvenc", "hevc_nvenc", "libx264" };
+        var codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_GIF);
+        if (codec == null) throw new InvalidOperationException("No GIF encoder");
+        var c = ffmpeg.avcodec_alloc_context3(codec);
+        c->width = ffmpeg.av_buffersink_get_w(sink);
+        c->height = ffmpeg.av_buffersink_get_h(sink);
+        c->pix_fmt = (AVPixelFormat)ffmpeg.av_buffersink_get_format(sink);
+        c->time_base = ffmpeg.av_buffersink_get_time_base(sink);
+        c->framerate = ffmpeg.av_buffersink_get_frame_rate(sink);
+        FF.Check(ffmpeg.avcodec_open2(c, codec, null), "open gif encoder");
+        Log.Info($"Export: GIF {c->width}x{c->height}");
+        return c;
+    }
+
+    private static AVCodecContext* OpenVideoEncoder(AVFilterContext* sink, string srcCodec, long bitrate, double fps, bool globalHeader, bool constantRate = false)
+    {
+        var names = constantRate ? new[] { "h264_nvenc", "libx264" } : srcCodec == "hevc" ? new[] { "hevc_nvenc", "h264_nvenc", "libx264" } : new[] { "h264_nvenc", "hevc_nvenc", "libx264" };
         var tb = ffmpeg.av_buffersink_get_time_base(sink);
         var rate = ffmpeg.av_buffersink_get_frame_rate(sink);
         if (rate.num <= 0) rate = ffmpeg.av_d2q(fps, 1000);
@@ -302,8 +376,8 @@ public static unsafe class ClipExporter
             c->gop_size = (int)Math.Round(fps * 2);
             c->max_b_frames = 0;
             c->bit_rate = bitrate;
-            c->rc_max_rate = bitrate * 3 / 2;
-            c->rc_buffer_size = (int)Math.Min(int.MaxValue, bitrate * 2);
+            c->rc_max_rate = constantRate ? bitrate : bitrate * 3 / 2;
+            c->rc_buffer_size = (int)Math.Min(int.MaxValue, constantRate ? bitrate : bitrate * 2);
             c->color_primaries = AVColorPrimaries.AVCOL_PRI_BT709;
             c->color_trc = AVColorTransferCharacteristic.AVCOL_TRC_BT709;
             c->colorspace = AVColorSpace.AVCOL_SPC_BT709;
@@ -313,14 +387,18 @@ public static unsafe class ClipExporter
             {
                 ffmpeg.av_dict_set(&o, "preset", "p5", 0);
                 ffmpeg.av_dict_set(&o, "tune", "hq", 0);
-                ffmpeg.av_dict_set(&o, "rc", "vbr", 0);
+                ffmpeg.av_dict_set(&o, "rc", constantRate ? "cbr" : "vbr", 0);
                 ffmpeg.av_dict_set(&o, "spatial-aq", "1", 0);
             }
             else
             {
                 ffmpeg.av_dict_set(&o, "preset", "veryfast", 0);
-                ffmpeg.av_dict_set(&o, "crf", "18", 0);
-                c->bit_rate = 0;
+                if (constantRate) ffmpeg.av_dict_set(&o, "nal-hrd", "cbr", 0);
+                else
+                {
+                    ffmpeg.av_dict_set(&o, "crf", "18", 0);
+                    c->bit_rate = 0;
+                }
             }
             int ret = ffmpeg.avcodec_open2(c, codec, &o);
             ffmpeg.av_dict_free(&o);

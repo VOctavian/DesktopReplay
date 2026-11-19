@@ -36,12 +36,13 @@ public static class WindowHelper
         SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
     }
 
-    /// <summary>Hides the window from Alt+Tab; toasts are also non-activating and click-through.</summary>
-    public static void MakeToolWindow(Window w, bool clickThrough)
+    /// <summary>Hides the window from Alt+Tab. Toasts never take focus (noActivate); plain ones are also click-through.</summary>
+    public static void MakeToolWindow(Window w, bool clickThrough, bool noActivate = false)
     {
         var h = new WindowInteropHelper(w).EnsureHandle();
         int ex = GetWindowLong(h, GWL_EXSTYLE) | WS_EX_TOOLWINDOW;
         if (clickThrough) ex |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+        if (noActivate) ex |= WS_EX_NOACTIVATE;
         SetWindowLong(h, GWL_EXSTYLE, ex);
     }
 

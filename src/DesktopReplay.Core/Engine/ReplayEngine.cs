@@ -7,9 +7,12 @@ using DesktopReplay.Core.Settings;
 
 namespace DesktopReplay.Core.Engine;
 
-public enum NoticeKind { ReplaySaved, RecordingStarted, RecordingStopped, ScreenshotSaved, StorageWarning, ReplayOn, ReplayOff, Error }
+public enum NoticeKind { ReplaySaved, RecordingStarted, RecordingStopped, ScreenshotSaved, StorageWarning, ReplayOn, ReplayOff, Error,
+    DiskBufferPaused, DiskBufferResumed, DiskRecordingStopped, DiskNoSpaceForSave }
 
-public sealed record Notice(NoticeKind Kind, IReadOnlyList<string> Paths, string? Detail = null, StorageUsage? Storage = null, double MinutesLeft = 0);
+/// <param name="Detail">Error text, or the drive for disk notices.</param>
+public sealed record Notice(NoticeKind Kind, IReadOnlyList<string> Paths, string? Detail = null, StorageUsage? Storage = null, double MinutesLeft = 0,
+    long FreeBytes = 0, long NeededBytes = 0);
 
 /// <summary>
 /// Orchestrates capture sessions: replay buffer, manual recording and screenshots.
@@ -141,6 +144,8 @@ public sealed class ReplayEngine : IDisposable
         if (monitors.Count == 0) throw new InvalidOperationException("No monitors found");
         long t0 = Clock.NowUs();
         var store = new PacketStore(s.BufferFolder, TimeSpan.FromSeconds(s.ReplaySeconds), s.ReplayEnabled);
+        store.WriteFailed += _ => _diskCheckNow = true;
+        if (_bufferPausedForDisk) store.Paused = true;
         var session = new Session { T0 = t0, Store = store };
         try
         {
@@ -188,6 +193,7 @@ public sealed class ReplayEngine : IDisposable
     private void Watchdog()
     {
         if (_disposed) return;
+        if (_diskCheckNow) { try { CheckDisks(); } catch { } }
         if (_restartPending)
         {
             _restartPending = false;
@@ -200,10 +206,74 @@ public sealed class ReplayEngine : IDisposable
                 await EnsureSessionAsync();
             });
         }
+        try { CheckDisks(); } catch (Exception ex) { Log.Warn($"Disk check failed: {ex.Message}"); }
         if (_recording != null && Environment.TickCount64 - _recording.LastStorageCheck > 60_000)
         {
             _recording.LastStorageCheck = Environment.TickCount64;
             CheckStorage();
+        }
+    }
+
+    // ---------- Disk space guard ----------
+
+    private const long BufferPauseBelow = 1_500L << 20;   // pause the replay buffer
+    private const long BufferResumeAbove = 3_000L << 20;  // resume it (hysteresis)
+    private const long RecordingStopBelow = 1_000L << 20; // finish the manual recording
+    private const long SaveReserve = 300L << 20;
+    private volatile bool _bufferPausedForDisk, _diskCheckNow, _stoppingForDisk;
+
+    public bool BufferPausedForDisk => _bufferPausedForDisk;
+
+    private static string DriveOf(string folder)
+    {
+        try { return Path.GetPathRoot(Path.GetFullPath(folder)) ?? folder; } catch { return folder; }
+    }
+
+    /// <summary>Runs every 5 s from the watchdog (sooner after a failed buffer write).</summary>
+    private void CheckDisks()
+    {
+        _diskCheckNow = false;
+        var session = _session;
+        if (session != null && _settings.ReplayEnabled)
+        {
+            long free = Storage.FreeBytes(_settings.BufferFolder);
+            bool writeFailed = session.Store.Paused && !_bufferPausedForDisk;
+            if (!_bufferPausedForDisk && (writeFailed || (free >= 0 && free < BufferPauseBelow)))
+            {
+                _bufferPausedForDisk = true;
+                session.Store.Paused = true;
+                Log.Warn($"Low disk space on {DriveOf(_settings.BufferFolder)} ({free >> 20} MB free): replay buffer paused");
+                Notify?.Invoke(new Notice(NoticeKind.DiskBufferPaused, Array.Empty<string>(), DriveOf(_settings.BufferFolder), FreeBytes: free));
+                StateChanged?.Invoke();
+            }
+            else if (_bufferPausedForDisk && free > BufferResumeAbove)
+            {
+                _bufferPausedForDisk = false;
+                session.Store.Paused = false;
+                Log.Info($"Disk space recovered ({free >> 20} MB free): replay buffer resumed");
+                Notify?.Invoke(new Notice(NoticeKind.DiskBufferResumed, Array.Empty<string>(), DriveOf(_settings.BufferFolder), FreeBytes: free));
+                StateChanged?.Invoke();
+            }
+        }
+
+        if (_recording != null && !_stoppingForDisk)
+        {
+            long free = Storage.FreeBytes(_settings.EffectiveRecordingsFolder);
+            if (free >= 0 && free < RecordingStopBelow)
+            {
+                _stoppingForDisk = true;
+                Log.Warn($"Low disk space ({free >> 20} MB free): stopping the recording");
+                _ = Locked(async () =>
+                {
+                    try
+                    {
+                        if (_recording == null) return;
+                        await StopRecordingCore();
+                        Notify?.Invoke(new Notice(NoticeKind.DiskRecordingStopped, Array.Empty<string>(), DriveOf(_settings.EffectiveRecordingsFolder), FreeBytes: free));
+                    }
+                    finally { _stoppingForDisk = false; }
+                });
+            }
         }
     }
 
@@ -215,6 +285,14 @@ public sealed class ReplayEngine : IDisposable
         if (session == null || !session.Store.BufferEnabled) return Array.Empty<string>();
         var name = _game.ActiveName;
         var time = DateTime.Now;
+        long needed = session.Store.BufferedBytes + SaveReserve;
+        long free = Storage.FreeBytes(_settings.OutputFolder);
+        if (free >= 0 && free < needed)
+        {
+            Log.Warn($"Replay not saved: {free >> 20} MB free, ~{needed >> 20} MB needed");
+            Notify?.Invoke(new Notice(NoticeKind.DiskNoSpaceForSave, Array.Empty<string>(), DriveOf(_settings.OutputFolder), FreeBytes: free, NeededBytes: needed));
+            return Array.Empty<string>();
+        }
         var result = await Task.Run(() => SaveReplayCore(session, name, time));
         if (result.Count > 0)
         {
@@ -360,6 +438,15 @@ public sealed class ReplayEngine : IDisposable
             {
                 if (!m.HasData) { try { File.Delete(m.Path); } catch { } continue; }
                 var mp4 = Path.ChangeExtension(m.Path, ".mp4");
+                long size = new FileInfo(m.Path).Length;
+                long free = Storage.FreeBytes(m.Path);
+                if (free >= 0 && free < size + SaveReserve)
+                {
+                    // the MP4 copy needs as much space again; the MKV is a complete, playable file
+                    Log.Warn($"Not enough space to remux {m.Path} ({free >> 20} MB free), keeping MKV");
+                    list.Add(m.Path);
+                    continue;
+                }
                 try
                 {
                     FileMuxer.Remux(m.Path, mp4);

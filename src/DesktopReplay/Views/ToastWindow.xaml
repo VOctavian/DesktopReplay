@@ -5,7 +5,7 @@
         ShowInTaskbar="False" Topmost="True" ShowActivated="False" ResizeMode="NoResize"
         SizeToContent="WidthAndHeight" Focusable="False">
     <Border x:Name="Card" Background="#F0171A20" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-            CornerRadius="10" Padding="16,12" MinWidth="300" MaxWidth="420" Margin="12">
+            CornerRadius="10" Padding="16,12" MinWidth="300" MaxWidth="440" Margin="12">
         <Border.Effect>
             <DropShadowEffect BlurRadius="18" ShadowDepth="0" Opacity="0.5" />
         </Border.Effect>
@@ -18,6 +18,7 @@
             <StackPanel Grid.Column="1">
                 <TextBlock x:Name="TitleText" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <TextBlock x:Name="BodyText" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" />
+                <WrapPanel x:Name="ActionsPanel" Margin="0,10,0,0" Visibility="Collapsed" />
             </StackPanel>
         </Grid>
     </Border>
