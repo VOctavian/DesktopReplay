@@ -31,6 +31,12 @@ public sealed class VideoItem : INotifyPropertyChanged
     public bool ShowCheck { get => _showCheck; set { if (_showCheck == value) return; _showCheck = value; PropertyChanged?.Invoke(this, new(nameof(ShowCheck))); } }
     public bool IsImage => Entry.IsImage;
 
+    private bool _busy;
+    private double _progress;
+    /// <summary>A Discord export of this file is running.</summary>
+    public bool IsBusy { get => _busy; set { _busy = value; PropertyChanged?.Invoke(this, new(nameof(IsBusy))); } }
+    public double Progress { get => _progress; set { _progress = value; PropertyChanged?.Invoke(this, new(nameof(Progress))); } }
+
     public string DurationText => Entry.Duration > 0 ? WindowHelper.FormatDuration(TimeSpan.FromSeconds(Math.Round(Entry.Duration))) : "—";
     public string InfoText
     {
@@ -451,6 +457,27 @@ public partial class GalleryWindow : Window
     private void OnDeleteSelected(object sender, RoutedEventArgs e) => DeleteItems(Selected);
     private void OnCopy(object sender, RoutedEventArgs e) { if (ItemOf(sender) is { } i) CopyItems(new() { i }); }
 
+    private async void OnDiscord(object sender, RoutedEventArgs e)
+    {
+        if (ItemOf(sender) is not { IsImage: false, IsBusy: false } item) return;
+        StopHoverPreview();
+        item.IsBusy = true;
+        item.Progress = 0;
+        try
+        {
+            var progress = new Progress<double>(p => { item.Progress = p; CountText.Text = Loc.F("D.Working", (int)(p * 100)); });
+            var output = await DiscordShare.ExportWholeAsync(item.Entry.Path, progress, _cts.Token);
+            CountText.Text = DiscordShare.Finish(output);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log.Error("Discord export failed", ex);
+            CountText.Text = Loc.F("D.Failed", ex.Message);
+        }
+        finally { item.IsBusy = false; }
+    }
+
     private void CopyItems(List<VideoItem> items)
     {
         if (items.Count == 0) return;
@@ -555,6 +582,53 @@ public partial class GalleryWindow : Window
     private void OnDelete(object sender, RoutedEventArgs e)
     {
         if (ItemOf(sender) is { } i) DeleteItems(new() { i });
+    }
+}
+
+/// <summary>One-click "for Discord": compress to the size limit into %TEMP% and put the file on the clipboard.</summary>
+public static class DiscordShare
+{
+    public static string TempDir => Path.Combine(Path.GetTempPath(), "DesktopReplay", "discord");
+
+    /// <summary>A fresh path in its own folder (so a file still on the clipboard is never overwritten).</summary>
+    public static string NewTempPath(string sourcePath)
+    {
+        Cleanup();
+        var dir = Path.Combine(TempDir, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, Path.GetFileNameWithoutExtension(sourcePath) + ".mp4");
+    }
+
+    /// <summary>Removes exports older than a day (long enough to paste them, short enough not to pile up).</summary>
+    public static void Cleanup()
+    {
+        try
+        {
+            if (!Directory.Exists(TempDir)) return;
+            foreach (var d in new DirectoryInfo(TempDir).EnumerateDirectories())
+                if (d.CreationTime < DateTime.Now.AddDays(-1))
+                    try { d.Delete(true); } catch { }
+        }
+        catch { }
+    }
+
+    /// <summary>Whole file, first audio track (what Discord plays).</summary>
+    public static async Task<string> ExportWholeAsync(string source, IProgress<double>? progress, CancellationToken ct)
+    {
+        var info = await Task.Run(() => MediaProbe.Probe(source), ct);
+        var tracks = info.Audio.Select(a => new AudioTrackEdit(a.Index, a.Title, true, 1, 0, info.Duration)).ToList();
+        var output = NewTempPath(source);
+        await ClipExporter.ExportAsync(new ExportRequest(source, output, 0, info.Duration, false, 0.5, tracks, false, "",
+            ExportPreset.Discord, ClipExporter.DiscordLimit), progress, ct);
+        return output;
+    }
+
+    /// <summary>Copies the result and returns the status line to show.</summary>
+    public static string Finish(string output)
+    {
+        bool ok = FileActions.CopyToClipboard(new[] { output });
+        Log.Info($"Discord share ready: {output} ({new FileInfo(output).Length / 1024} KB)");
+        return ok ? Loc.F("D.Done", WindowHelper.FormatBytes(new FileInfo(output).Length)) : Loc.T("G.CopyFailed");
     }
 }
 

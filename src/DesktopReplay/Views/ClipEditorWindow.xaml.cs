@@ -593,16 +593,38 @@ public partial class ClipEditorWindow : Window
     {
         var dir = Path.GetDirectoryName(_entry.Path)!;
         var temp = Path.Combine(dir, name + MediaLibrary.TempMarker + OutputExt);
+        return await RunExportAsync(BuildRequest(temp), Loc.T("E.Exporting"), p => Loc.F("E.ExportingPct", p));
+    }
+
+    /// <summary>"Discord" button: the fragment with the current edits, sized for Discord, into %TEMP% and onto the clipboard.</summary>
+    private async void OnDiscordQuick(object sender, RoutedEventArgs e)
+    {
+        var output = DiscordShare.NewTempPath(_entry.Path);
+        var request = BuildRequest(output) with { Preset = ExportPreset.Discord, TargetBytes = ClipExporter.DiscordLimit };
+        var done = await RunExportAsync(request, Loc.F("D.Working", 0), p => Loc.F("D.Working", p));
+        if (done == null) return;
+        try
+        {
+            _lastSaved = done;
+            StatusText.Text = DiscordShare.Finish(done);
+            CopyResultBtn.Visibility = FolderResultBtn.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) { StatusText.Text = Loc.F("D.Failed", ex.Message); }
+    }
+
+    private async Task<string?> RunExportAsync(ExportRequest request, string startText, Func<int, string> progressText)
+    {
+        var temp = request.Output;
         Pause();
         SetBusy(true);
         _exportCts = new CancellationTokenSource();
         Progress.Value = 0;
         Progress.Visibility = CancelBtn.Visibility = Visibility.Visible;
-        StatusText.Text = Loc.T("E.Exporting");
+        StatusText.Text = startText;
         try
         {
-            var progress = new Progress<double>(p => { Progress.Value = p; StatusText.Text = Loc.F("E.ExportingPct", (int)(p * 100)); });
-            await ClipExporter.ExportAsync(BuildRequest(temp), progress, _exportCts.Token);
+            var progress = new Progress<double>(p => { Progress.Value = p; StatusText.Text = progressText((int)(p * 100)); });
+            await ClipExporter.ExportAsync(request, progress, _exportCts.Token);
             return temp;
         }
         catch (OperationCanceledException)
@@ -628,7 +650,7 @@ public partial class ClipEditorWindow : Window
         _busy = busy;
         EditPanel.IsEnabled = !busy;
         Timeline.IsEnabled = !busy;
-        DeleteBtn.IsEnabled = SaveCopyBtn.IsEnabled = !busy;
+        DeleteBtn.IsEnabled = SaveCopyBtn.IsEnabled = DiscordBtn.IsEnabled = !busy;
         ReplaceBtn.IsEnabled = !busy && Preset == ExportPreset.Original;
     }
 

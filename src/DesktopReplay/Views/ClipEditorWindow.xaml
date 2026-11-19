@@ -148,6 +148,12 @@
                     <Button x:Name="FolderResultBtn" Style="{StaticResource IconButton}" Content="&#xE838;" ToolTip="{l:T OpenFolder}" Click="OnFolderResult" Visibility="Collapsed" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="DiscordBtn" Click="OnDiscordQuick" Margin="0,0,8,0" ToolTip="{l:T D.EditorHint}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE72D;" FontFamily="{StaticResource Icons}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:T D.Button}" />
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="DeleteBtn" Click="OnDelete" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE74D;" FontFamily="{StaticResource Icons}" Margin="0,0,8,0" VerticalAlignment="Center" />

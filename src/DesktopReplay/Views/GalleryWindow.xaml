@@ -38,6 +38,10 @@
                             <Border x:Name="badge" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Padding="6,2" CornerRadius="4" Background="#C0000000">
                                 <TextBlock Text="{Binding DurationText}" FontSize="12" Foreground="White" />
                             </Border>
+                            <Border x:Name="busy" VerticalAlignment="Bottom" Background="#C0000000" Padding="10,6" Visibility="Collapsed">
+                                <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" Foreground="{StaticResource Accent}"
+                                             Background="#40FFFFFF" BorderThickness="0" />
+                            </Border>
                             <Border x:Name="check" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Width="24" Height="24" CornerRadius="6"
                                     Background="#B0000000" BorderBrush="#B0FFFFFF" BorderThickness="1.5" Visibility="Collapsed"
                                     MouseLeftButtonUp="OnCheckClick" ToolTip="{l:T G.SelectHint}">
@@ -59,6 +63,7 @@
                         <Button x:Name="previewBtn" Style="{StaticResource IconButton}" Content="&#xE768;" ToolTip="{l:T G.Preview}" Click="OnPreview" />
                         <Button x:Name="cutBtn" Style="{StaticResource IconButton}" Content="&#xE8C6;" ToolTip="{l:T G.Cut}" Click="OnCut" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE8C8;" ToolTip="{l:T G.CopyHint}" Click="OnCopy" />
+                        <Button x:Name="discordBtn" Style="{StaticResource IconButton}" Content="&#xE72D;" ToolTip="{l:T D.Hint}" Click="OnDiscord" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE838;" ToolTip="{l:T OpenFolder}" Click="OnShowInFolder" />
                         <Button x:Name="playerBtn" Style="{StaticResource IconButton}" Content="&#xE8A7;" ToolTip="{l:T G.OpenPlayer}" Click="OnOpenPlayer" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE74D;" ToolTip="{l:T G.Delete}" Click="OnDelete" Foreground="{StaticResource Muted}" />
@@ -82,11 +87,16 @@
                     <Setter TargetName="check" Property="BorderBrush" Value="{StaticResource Accent}" />
                     <Setter TargetName="checkMark" Property="Visibility" Value="Visible" />
                 </DataTrigger>
+                <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                    <Setter TargetName="busy" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="discordBtn" Property="IsEnabled" Value="False" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsImage}" Value="True">
                     <Setter TargetName="badge" Property="Visibility" Value="Collapsed" />
                     <Setter TargetName="play" Property="Visibility" Value="Collapsed" />
                     <Setter TargetName="cutBtn" Property="Visibility" Value="Collapsed" />
                     <Setter TargetName="playerBtn" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="discordBtn" Property="Visibility" Value="Collapsed" />
                     <Setter TargetName="previewBtn" Property="Content" Value="&#xE8A7;" />
                     <Setter TargetName="previewBtn" Property="ToolTip" Value="{l:T Open}" />
                 </DataTrigger>

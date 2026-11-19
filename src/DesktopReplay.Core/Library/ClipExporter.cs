@@ -50,7 +50,7 @@ public static unsafe class ClipExporter
 
     private static string Num(double v) => v.ToString("0.######", CultureInfo.InvariantCulture);
 
-    public const long DiscordLimit = 10L * 1000 * 1000; // Discord's free upload limit is 10 MB
+    public const long DiscordLimit = 20L * 1000 * 1000; // stays under 20 MB however Discord counts megabytes
 
     public static void Export(ExportRequest r, IProgress<double>? progress, CancellationToken ct)
     {
@@ -100,6 +100,12 @@ public static unsafe class ClipExporter
             if (r.Preset == ExportPreset.Discord && !r.MergeAudio && tracks.Count > 1) tracks = tracks.Take(1).ToList();
             bool merge = r.MergeAudio || r.Preset == ExportPreset.Discord;
 
+            long srcBitrate = vst->codecpar->bit_rate;
+            if (srcBitrate <= 0 && inFmt->duration > 0)
+                srcBitrate = (long)(new FileInfo(r.Input).Length * 8 / (inFmt->duration / (double)ffmpeg.AV_TIME_BASE) * 0.9);
+            if (srcBitrate <= 0) srcBitrate = 20_000_000;
+            string codecName = ffmpeg.avcodec_get_name(vst->codecpar->codec_id);
+
             // Discord: split the size budget between audio and video
             long discordAudio = 0, discordVideo = 0;
             if (r.Preset == ExportPreset.Discord)
@@ -108,6 +114,8 @@ public static unsafe class ClipExporter
                 double totalBps = r.TargetBytes * 8 * 0.95 * budgetScale / secs; // ~5% container overhead
                 discordAudio = tracks.Count == 0 ? 0 : totalBps > 1_000_000 ? 128_000 : 96_000;
                 discordVideo = (long)Math.Max(120_000, totalBps - discordAudio);
+                // never above the source quality: short clips stay small (H.264 needs ~1.5x the bits of HEVC)
+                discordVideo = Math.Min(discordVideo, (long)(srcBitrate * (codecName == "hevc" ? 1.5 : 1.1)));
             }
             var used = new HashSet<int> { vs };
             foreach (var t in tracks) used.Add(t.StreamIndex);
@@ -210,11 +218,6 @@ public static unsafe class ClipExporter
             FF.Check(ffmpeg.avformat_alloc_output_context2(&outFmt, null, gif ? "gif" : mp4 ? "mp4" : "matroska", r.Output), "alloc output");
             bool globalHeader = (outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0;
 
-            long srcBitrate = vst->codecpar->bit_rate;
-            if (srcBitrate <= 0 && inFmt->duration > 0)
-                srcBitrate = (long)(new FileInfo(r.Input).Length * 8 / (inFmt->duration / (double)ffmpeg.AV_TIME_BASE) * 0.9);
-            if (srcBitrate <= 0) srcBitrate = 20_000_000;
-            string codecName = ffmpeg.avcodec_get_name(vst->codecpar->codec_id);
             outputs[0].Enc = gif ? OpenGifEncoder(outputs[0].Sink)
                 : r.Preset == ExportPreset.Discord ? OpenVideoEncoder(outputs[0].Sink, "h264", discordVideo, fps, globalHeader, constantRate: true)
                 : OpenVideoEncoder(outputs[0].Sink, codecName, srcBitrate, fps, globalHeader);
