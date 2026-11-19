@@ -43,7 +43,7 @@ public static class Program
             Loc.I.SetLanguage(settings.Language);
             var wpf = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
             wpf.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/DesktopReplay;component/Themes/Theme.xaml") });
-            var gallery = new Views.GalleryWindow(() => settings, () => { });
+            var gallery = new Views.GalleryWindow(() => settings, () => { }, () => Log.Info("Settings requested (--gallery-only has no overlay)"));
             int tt = Array.IndexOf(args, "--toast-test"); // shows the "replay saved" toast for a file, for UI checks
             if (tt >= 0 && tt + 1 < args.Length)
                 gallery.Loaded += (_, _) => Views.ToastWindow.Show(Loc.T("N.ReplaySaved"), Path.GetFileName(args[tt + 1]), Views.ToastKind.Ok, 30, new[]

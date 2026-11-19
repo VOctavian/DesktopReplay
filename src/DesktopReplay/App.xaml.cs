@@ -124,7 +124,11 @@ public partial class App : Application
     }
 
     /// <summary>Persists UI-only preferences (gallery layout) without touching the engine.</summary>
-    public void SaveUiSettings() => SaveSettings();
+    public void SaveUiSettings()
+    {
+        SaveSettings();
+        RebuildTrayMenu(); // the gallery may have switched the language
+    }
 
     private Views.GalleryWindow? _gallery;
 
@@ -136,7 +140,7 @@ public partial class App : Application
             _gallery.Activate();
             return;
         }
-        _gallery = new Views.GalleryWindow(() => Settings, SaveUiSettings);
+        _gallery = new Views.GalleryWindow(() => Settings, SaveUiSettings, () => ShowOverlay(settings: true));
         _gallery.Closed += (_, _) => _gallery = null;
         _gallery.Show();
         _gallery.Activate();

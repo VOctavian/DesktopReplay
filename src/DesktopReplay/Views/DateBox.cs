@@ -118,7 +118,10 @@ public sealed class DateBox : UserControl
         root.Children.Add(border);
         root.Children.Add(_popup);
         Content = root;
-        Loaded += (_, _) => ShowText();
+        // follow language switches while open (subscribed only while on screen, so closed windows are not kept alive)
+        System.ComponentModel.PropertyChangedEventHandler onLang = (_, _) => Dispatcher.BeginInvoke(ShowText);
+        Loaded += (_, _) => { ShowText(); Loc.I.PropertyChanged += onLang; };
+        Unloaded += (_, _) => Loc.I.PropertyChanged -= onLang;
     }
 
     private static ControlTemplate PlainTextBoxTemplate()

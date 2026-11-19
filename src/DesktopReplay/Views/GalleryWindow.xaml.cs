@@ -68,6 +68,7 @@ public partial class GalleryWindow : Window
 
     private readonly Func<AppSettings> _settings;
     private readonly Action _saveSettings;
+    private readonly Action? _openSettings;
     private readonly Dictionary<string, VideoItem> _items = new(StringComparer.OrdinalIgnoreCase);
     private readonly ObservableCollection<VideoItem> _view = new();
     private readonly List<FileSystemWatcher> _watchers = new();
@@ -80,10 +81,11 @@ public partial class GalleryWindow : Window
     private Grid? _hoverHost;
     private MediaElement? _hoverPlayer;
 
-    public GalleryWindow(Func<AppSettings> settings, Action saveSettings)
+    public GalleryWindow(Func<AppSettings> settings, Action saveSettings, Action? openSettings = null)
     {
         _settings = settings;
         _saveSettings = saveSettings;
+        _openSettings = openSettings;
         var app = settings();
         InitializeComponent();
         TileList.ItemsSource = _view;
@@ -100,6 +102,8 @@ public partial class GalleryWindow : Window
         DurMinUnit.ItemsSource = units; DurMinUnit.SelectedIndex = 0;
         DurMaxUnit.ItemsSource = units; DurMaxUnit.SelectedIndex = 1;
         ZoomSlider.Value = Math.Clamp(app.GalleryTileWidth, 180, 560);
+        LanguageCombo.SelectedIndex = Loc.I.Language == "en" ? 1 : 0;
+        SettingsBtn.Visibility = openSettings != null ? Visibility.Visible : Visibility.Collapsed;
         _loading = false;
 
         SourceInitialized += (_, _) =>
@@ -108,9 +112,11 @@ public partial class GalleryWindow : Window
             WindowHelper.ExcludeFromCapture(this);
         };
         Loaded += async (_, _) => { StartWatching(); await RescanAsync(); };
+        Loc.I.PropertyChanged += OnLocChanged;
         Closed += (_, _) =>
         {
             _cts.Cancel();
+            Loc.I.PropertyChanged -= OnLocChanged;
             StopHoverPreview();
             foreach (var w in _watchers) w.Dispose();
             _settings().GalleryTileWidth = (int)ZoomSlider.Value;
@@ -134,6 +140,33 @@ public partial class GalleryWindow : Window
         SortCombo.ItemsSource = opts;
         SortCombo.SelectedValue = opts.Any(o => (SortMode)o.Value == selected) ? selected : SortMode.Newest;
     }
+
+    /// <summary>Switches the UI language right away (XAML texts follow Loc; code-built texts are rebuilt here).</summary>
+    private void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || LanguageCombo.SelectedItem is not ComboBoxItem { Tag: string lang } || lang == Loc.I.Language) return;
+        _settings().Language = lang;
+        Loc.I.SetLanguage(lang); // → OnLocChanged
+        _saveSettings();
+    }
+
+    /// <summary>Language changed here or in the settings: rebuild the texts made in code.</summary>
+    private void OnLocChanged(object? sender, PropertyChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
+    {
+        _loading = true;
+        LanguageCombo.SelectedIndex = Loc.I.Language == "en" ? 1 : 0;
+        FillSortOptions(SortCombo.SelectedValue as SortMode? ?? SortMode.Newest);
+        int minU = DurMinUnit.SelectedIndex, maxU = DurMaxUnit.SelectedIndex;
+        var units = new[] { new Opt(Loc.T("G.Sec"), 1.0), new Opt(Loc.T("G.Min"), 60.0), new Opt(Loc.T("G.Hour"), 3600.0) };
+        DurMinUnit.ItemsSource = units; DurMinUnit.SelectedIndex = minU;
+        DurMaxUnit.ItemsSource = units; DurMaxUnit.SelectedIndex = maxU;
+        _loading = false;
+        foreach (var i in _items.Values) i.Update(i.Entry); // dates and sizes in the new language
+        RebuildGroups();
+        ApplyFilter();
+    });
+
+    private void OnOpenSettings(object sender, RoutedEventArgs e) => _openSettings?.Invoke();
 
     private void OnTabChanged(object sender, RoutedEventArgs e)
     {
@@ -313,7 +346,7 @@ public partial class GalleryWindow : Window
             "yesterday" => (today.AddDays(-1), today.AddDays(-1)),
             "week" => (monday, today),
             "lastweek" => (monday.AddDays(-7), monday.AddDays(-1)),
-            "older" => (null, today.AddDays(-14)),
+            "older" => (null, monday.AddDays(-8)), // everything before last week's Monday
             _ => (null, null),
         };
     }

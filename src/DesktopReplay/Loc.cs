@@ -55,7 +55,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["G.Yesterday"] = ("Вчера", "Yesterday"),
         ["G.ThisWeek"] = ("Эта неделя", "This week"),
         ["G.LastWeek"] = ("Прошлая неделя", "Last week"),
-        ["G.Older"] = ("Старше 2 недель", "Older than 2 weeks"),
+        ["G.Older"] = ("Раньше прошлой недели", "Before last week"),
         ["G.Date"] = ("Дата", "Date"),
         ["G.PickDate"] = ("Выбрать дату", "Pick a date"),
         ["G.Clear"] = ("Очистить", "Clear"),
