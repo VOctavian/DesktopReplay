@@ -175,7 +175,7 @@ public partial class App : Application
         {
             case NoticeKind.ReplaySaved:
                 if (_settings.NotifySound) Sounds.Saved();
-                Popup(Loc.T("N.ReplaySaved"), Files(), ToastKind.Ok, 7, VideoActions(n.Paths));
+                SavedPopup(Loc.T("N.ReplaySaved"), n.Paths, Files());
                 break;
             case NoticeKind.RecordingStarted:
                 if (_settings.NotifySound) Sounds.Start();
@@ -183,7 +183,7 @@ public partial class App : Application
                 break;
             case NoticeKind.RecordingStopped:
                 if (_settings.NotifySound) Sounds.Stop();
-                Popup(Loc.T("N.RecordingStopped"), Files(), ToastKind.Ok, 7, VideoActions(n.Paths));
+                SavedPopup(Loc.T("N.RecordingStopped"), n.Paths, Files());
                 break;
             case NoticeKind.ScreenshotSaved:
                 if (_settings.NotifySound) Sounds.Shot();
@@ -232,16 +232,12 @@ public partial class App : Application
         if (_settings.NotifyPopup) ToastWindow.Show(title, body, kind, seconds, actions);
     }
 
-    private ToastAction[]? VideoActions(IReadOnlyList<string> paths)
+    /// <summary>Saved replay/recording: per-monitor buttons when several monitors were captured.</summary>
+    private void SavedPopup(string title, IReadOnlyList<string> paths, string files)
     {
-        if (paths.Count == 0) return null;
-        var first = paths[0];
-        return new[]
-        {
-            new ToastAction(Loc.T("Open"), "\uE768", () => OpenPath(first)),
-            new ToastAction(Loc.T("G.Cut"), "\uE8C6", () => ShowEditor(first)),
-            new ToastAction(Loc.T("N.Folder"), "\uE838", () => Views.FileActions.ShowInFolder(first)),
-        };
+        if (!_settings.NotifyPopup) return;
+        if (paths.Count == 0) ToastWindow.Show(title, files, ToastKind.Ok, 7);
+        else Views.SavedToast.Show(title, paths, ShowEditor);
     }
 
     /// <summary>Opens the cut editor for a file (from a toast).</summary>

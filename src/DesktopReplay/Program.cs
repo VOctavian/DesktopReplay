@@ -44,14 +44,13 @@ public static class Program
             var wpf = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
             wpf.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/DesktopReplay;component/Themes/Theme.xaml") });
             var gallery = new Views.GalleryWindow(() => settings, () => { }, () => Log.Info("Settings requested (--gallery-only has no overlay)"));
-            int tt = Array.IndexOf(args, "--toast-test"); // shows the "replay saved" toast for a file, for UI checks
+            int tt = Array.IndexOf(args, "--toast-test"); // shows the "replay saved" toast for one or more files, for UI checks
             if (tt >= 0 && tt + 1 < args.Length)
-                gallery.Loaded += (_, _) => Views.ToastWindow.Show(Loc.T("N.ReplaySaved"), Path.GetFileName(args[tt + 1]), Views.ToastKind.Ok, 30, new[]
-                {
-                    new Views.ToastAction(Loc.T("Open"), "", () => App.OpenPath(args[tt + 1])),
-                    new Views.ToastAction(Loc.T("G.Cut"), "", () => new Views.ClipEditorWindow(DesktopReplay.Core.Library.MediaLibrary.EntryFor(args[tt + 1]), true).Show()),
-                    new Views.ToastAction(Loc.T("N.Folder"), "", () => Views.FileActions.ShowInFolder(args[tt + 1])),
-                });
+            {
+                var files = args.Skip(tt + 1).TakeWhile(a => !a.StartsWith("--")).ToList();
+                gallery.Loaded += (_, _) => Views.SavedToast.Show(Loc.T("N.ReplaySaved"), files,
+                    p => new Views.ClipEditorWindow(DesktopReplay.Core.Library.MediaLibrary.EntryFor(p), true).Show(), 30);
+            }
             return wpf.Run(gallery);
         }
 
